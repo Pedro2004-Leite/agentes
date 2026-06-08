@@ -1,0 +1,35 @@
+# OpenClaw runtime state (local apenas, nao commitar)
+.openclaw/
+
+# TOOLS.md real (cada maquina tem o seu)
+# Copia TOOLS.md.example -> TOOLS.md e preenche
+TOOLS.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Reports gerados (locais)
+reports/
+
+# Ficheiros de referencia locais
+NBIS.pdf
+
+# Sistema
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Temporarios
+*.tmp
+*.temp

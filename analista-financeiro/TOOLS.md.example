@@ -1,0 +1,21 @@
+# TOOLS.md - Local Setup
+
+Copy this file to `TOOLS.md` and fill in your machine-specific settings.
+`TOOLS.md` is gitignored — never committed.
+
+## Python
+- Python path: `python` (or full path like `C:\Python311\python.exe`)
+- Virtual environment: [path to .venv if using one]
+
+## API Keys (optional — yfinance works without any)
+- Finnhub API key: [your key from finnhub.io]
+- Alpha Vantage key: [your key from alphavantage.co]
+
+## Paths
+- Reports directory: `reports/` (created automatically)
+- Scripts directory: `scripts/`
+
+## Machine-specific notes
+- OS: [Windows / Linux / Mac]
+- Internet: [always on / intermittent]
+- Performance: This PC [is fast / has limited RAM — use --light mode]
