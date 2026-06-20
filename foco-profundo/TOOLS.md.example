@@ -1,0 +1,34 @@
+# TOOLS.md — Local Notes
+
+Skills define _how_ tools work. This file is for _your_ specifics.
+Configuration that changes per machine.
+
+## What Goes Here
+Things like: Camera names, SSH hosts, TTS voices, device nicknames.
+Anything that's true for your setup but not for everyone else's.
+
+## Examples
+```
+### Cameras
+- Living room: `rtsp://10.0.1.50:554/stream`
+- Front door: `usb:0`
+
+### SSH
+- Pi-hole: `pi@10.0.1.2` (key: `~/.ssh/id_ed25519`)
+- VPS: `user@myserver.com` port 2222
+
+### TTS
+- Voice: `en-US-ChristopherNeural`
+- Rate: 1.0
+```
+
+## Why Separate?
+Skills are shared across setups. This file is gitignored.
+Your tools stay yours.
+
+---
+
+Add whatever helps you do your job. This is your cheat sheet.
+
+## Related
+- [Agent workspace](/concepts/agent-workspace)

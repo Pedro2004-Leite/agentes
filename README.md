@@ -41,6 +41,7 @@ Depois edita os ficheiros gerados e aponta o OpenClaw para a nova pasta.
 |--------|-------|-----------|
 | 📋 Organizador Diário | `organizador-diario/` | Produtividade pessoal, priorização, hábitos |
 | 🍺 Carlsberg | `analista-financeiro/` | Briefing matinal, stock analysis, screening, portfolio tracking |
+| 🎯 Foco Profundo | `foco-profundo/` | Sessões de deep work, deteção de dispersão, streaks de foco |
 
 ### Carlsberg — Uso rápido
 
@@ -64,7 +65,7 @@ Requerimentos: `pip install yfinance pandas numpy tabulate`
 
 - [ ] `revisor-de-habitos` — acompanha hábitos diários e sugere ajustes
 - [ ] `planeador-semanal` — planeia a semana ao domingo à noite
-- [ ] `foco-profundo` — ajuda a entrar em sessões de deep work
+- [x] ~~`foco-profundo` — ajuda a entrar em sessões de deep work~~
 - [ ] `gestor-de-email` — triagem inteligente de email
 - [ ] `saude-e-energia` — lembra de pausas, água, alongamentos
 - [ ] `aprendizagem` — organiza tópicos de estudo e revisão espaçada

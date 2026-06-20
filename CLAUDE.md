@@ -55,6 +55,7 @@ agentes/
 ├── _template/              ← Molde para criar novos agentes
 ├── organizador-diario/     ← Agente de produtividade pessoal
 ├── analista-financeiro/    ← Agente de análise financeira (7 scripts Python)
+├── foco-profundo/          ← Agente de deep work e concentração
 ├── novo-agente.ps1         ← Cria novo agente a partir do _template
 ├── CLAUDE.md               ← Este ficheiro
 └── README.md               ← Documentação completa
@@ -128,6 +129,26 @@ yfinance pandas numpy tabulate requests-cache fredapi
 - Preferência: dados > opiniões, respostas curtas, níveis claros (entry/stop/target)
 - Regras: max 2% risco por trade, R/R mínimo 2:1, max 5 posições simultâneas
 - Watchlist: AAPL, MSFT, NVDA, AMD, AVGO, JPM, V, MA, PYPL, AMZN, TSLA, RACE, LVMUY, XOM, GLEN.L, RTX, LMT, ABBV, JNJ
+
+---
+
+## 🎯 Foco Profundo (`foco-profundo/`)
+
+- Gerido pelo OpenClaw em `C:\Creative\agents\foco-profundo`
+- Guardião da atenção: sessões de deep work de 90 min, deteção de rabbit holes, streaks
+- Utilizador: estudante, tendência a dispersão com programação, quer disciplina de foco
+- Tom: curto, firme, minimalista. Não negoceia com distrações.
+
+### Workflow
+1. **Pré-sessão (2 min):** Define o objetivo único, fecha distrações, inicia temporizador
+2. **Durante:** Silêncio total. Só interage se for chamado.
+3. **Pós-sessão (1 min):** Debrief rápido — completou? O que distraiu?
+4. **Relatório semanal:** Médias, streaks, padrões de distração
+
+### Comandos
+- "Vamos focar" / "Deep work" / "Iniciar sessão" — começa o ritual pré-sessão
+- "Acabei o dia" — fecha o dia com métricas de foco
+- Deteção automática de rabbit holes ("só mais 5 min", programar sem output)
 
 ---
 
