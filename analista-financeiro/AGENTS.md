@@ -1,4 +1,4 @@
-# Analista Financeiro — Regras de Agente
+# Carlsberg — Regras de Agente
 
 ## Workflow diario
 

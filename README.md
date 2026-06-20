@@ -40,9 +40,9 @@ Depois edita os ficheiros gerados e aponta o OpenClaw para a nova pasta.
 | Agente | Pasta | Descrição |
 |--------|-------|-----------|
 | 📋 Organizador Diário | `organizador-diario/` | Produtividade pessoal, priorização, hábitos |
-| 📈 Analista Financeiro | `analista-financeiro/` | Briefing matinal, stock analysis, screening |
+| 🍺 Carlsberg | `analista-financeiro/` | Briefing matinal, stock analysis, screening, portfolio tracking |
 
-### Analista Financeiro — Uso rápido
+### Carlsberg — Uso rápido
 
 ```bash
 # Briefing matinal (indices, noticias, watchlist)

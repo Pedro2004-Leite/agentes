@@ -75,7 +75,7 @@ agentes/
 
 ---
 
-## 📈 Analista Financeiro (`analista-financeiro/`)
+## 🍺 Carlsberg (`analista-financeiro/`)
 
 ### Setup rápido
 ```bash
