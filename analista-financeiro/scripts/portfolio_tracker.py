@@ -2,10 +2,12 @@
 Portfolio tracker — tracking de posicoes abertas, P&L, metricas de risco.
 Uso:
   python portfolio_tracker.py                     (ver portfolio atual)
-  python portfolio_tracker.py --add AAPL 10 150.00 140.00    (adicionar posicao)
-  python portfolio_tracker.py --close AAPL 165.00            (fechar posicao)
-  python portfolio_tracker.py --update AAPL stop=148.00      (atualizar stop)
-  python portfolio_tracker.py --clean                        (remover posicoes fechadas)
+  python portfolio_tracker.py --add AAPL 10 150.00 --stop 140.00 --target 170.00
+  python portfolio_tracker.py --close AAPL 165.00
+  python portfolio_tracker.py --update AAPL --stop 148.00
+  python portfolio_tracker.py --risk              (analise de risco avancada)
+  python portfolio_tracker.py --size AAPL 150.00 140.00   (calcula position size)
+  python portfolio_tracker.py --clean
 Ficheiro de posicoes: ../positions.json
 """
 import sys
@@ -18,6 +20,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import POSITIONS_FILE, REPORTS_DIR, ensure_dirs
 
 try:
+    import requests_cache
+    requests_cache.install_cache(
+        str(Path(__file__).parent / '.yfinance_cache'),
+        expire_after=900,
+        allowable_methods=['GET'],
+    )
     import yfinance as yf
     import pandas as pd
     import numpy as np
@@ -314,6 +322,223 @@ def cmd_clean():
 
 
 # ============================================================
+# Risk Analysis
+# ============================================================
+
+def cmd_risk():
+    """Analise avancada de risco do portfolio."""
+    positions = load_positions()
+    open_pos = [p for p in positions if p["status"] == "open"]
+
+    if not open_pos:
+        print("Sem posicoes abertas para analisar.")
+        return
+
+    tickers = [p["ticker"] for p in open_pos]
+    prices = get_current_prices(tickers)
+
+    print(f"\n{'='*60}")
+    print(f"  ANALISE DE RISCO DO PORTFOLIO")
+    print(f"  {len(open_pos)} posicoes abertas")
+    print(f"{'='*60}\n")
+
+    # --- 1. Portfolio Beta ---
+    print("1. PORTFOLIO BETA")
+    try:
+        total_value = 0
+        weighted_beta = 0
+        for p in open_pos:
+            ticker = p["ticker"]
+            cp = prices.get(ticker, {}).get("price")
+            if not cp:
+                continue
+            value = p["shares"] * cp
+            total_value += value
+            try:
+                beta = yf.Ticker(ticker).info.get("beta", 1.0)
+                if beta is None:
+                    beta = 1.0
+                weighted_beta += beta * (value / total_value if total_value else 1 / len(open_pos))
+            except Exception:
+                weighted_beta += 1.0 * (value / total_value if total_value else 1 / len(open_pos))
+
+        if total_value > 0:
+            weighted_beta = weighted_beta
+            print(f"   Portfolio Beta: {weighted_beta:.2f}")
+            if weighted_beta > 1.5:
+                print(f"   🔴 Beta elevado — portfolio amplifica movimentos de mercado")
+            elif weighted_beta > 1.0:
+                print(f"   🟡 Beta > 1 — volatilidade acima do mercado")
+            else:
+                print(f"   🟢 Beta < 1 — portfolio defensivo")
+            print(f"   Valor total estimado: ${total_value:,.2f}")
+    except Exception as e:
+        print(f"   Erro: {e}")
+    print()
+
+    # --- 2. Correlation Matrix ---
+    print("2. MATRIZ DE CORRELACAO (3 meses)")
+    try:
+        # Fetch returns for all positions
+        ticker_data = {}
+        for ticker in tickers + ["SPY"]:
+            try:
+                hist = yf.Ticker(ticker).history(period="3mo")
+                if not hist.empty and len(hist) > 20:
+                    ticker_data[ticker] = hist["Close"].pct_change().dropna()
+            except Exception:
+                pass
+
+        if len(ticker_data) >= 2:
+            # Compute correlation
+            tickers_with_data = [t for t in tickers if t in ticker_data]
+            if tickers_with_data:
+                # Build correlation table
+                print("   Ticker  ", end="")
+                for t in tickers_with_data:
+                    print(f"  {t:6s}", end="")
+                print()
+
+                high_corr_pairs = []
+                for t1 in tickers_with_data:
+                    print(f"   {t1:8s}", end="")
+                    for t2 in tickers_with_data:
+                        common = ticker_data[t1].index.intersection(ticker_data[t2].index)
+                        if len(common) > 10:
+                            corr = ticker_data[t1][common].corr(ticker_data[t2][common])
+                            print(f"  {corr:5.2f} ", end="")
+                            if t1 < t2 and corr > 0.7:
+                                high_corr_pairs.append((t1, t2, corr))
+                        else:
+                            print(f"  {'N/D':5s} ", end="")
+                    print()
+
+                if high_corr_pairs:
+                    print()
+                    print(f"   ⚠️ Alta correlacao (>0.7):")
+                    for t1, t2, corr in high_corr_pairs:
+                        print(f"      {t1} <-> {t2}: r={corr:.2f}")
+    except Exception as e:
+        print(f"   Erro: {e}")
+    print()
+
+    # --- 3. Profit Factor & Expectancy ---
+    print("3. METRICAS DE PERFORMANCE")
+    try:
+        closed_pos = [p for p in positions if p["status"] == "closed"]
+        if closed_pos:
+            gross_wins = sum(
+                (p.get("exit_price", 0) - p["entry_price"]) * p["shares"]
+                for p in closed_pos if p.get("exit_price", 0) > p["entry_price"]
+            )
+            gross_losses = abs(sum(
+                (p.get("exit_price", 0) - p["entry_price"]) * p["shares"]
+                for p in closed_pos if p.get("exit_price", 0) <= p["entry_price"]
+            ))
+            wins = [p for p in closed_pos if p.get("exit_price", 0) > p["entry_price"]]
+            losses = [p for p in closed_pos if p.get("exit_price", 0) <= p["entry_price"]]
+
+            win_rate = len(wins) / len(closed_pos) * 100 if closed_pos else 0
+            profit_factor = gross_wins / gross_losses if gross_losses > 0 else float("inf")
+
+            avg_win = gross_wins / len(wins) if wins else 0
+            avg_loss = gross_losses / len(losses) if losses else 0
+            expectancy = (win_rate / 100) * avg_win - ((100 - win_rate) / 100) * avg_loss
+
+            print(f"   Trades fechados: {len(closed_pos)} | Win rate: {win_rate:.0f}%")
+            print(f"   Profit factor: {profit_factor:.2f}" + (" 🟢" if profit_factor > 1.5 else " 🟡" if profit_factor > 1.0 else " 🔴"))
+            print(f"   Avg Win: ${avg_win:.2f} | Avg Loss: ${avg_loss:.2f}")
+            print(f"   Expectancy: ${expectancy:.2f} por trade" + (" 🟢" if expectancy > 0 else " 🔴"))
+        else:
+            print("   Sem trades fechados. Nao ha dados para calcular metricas.")
+    except Exception as e:
+        print(f"   Erro: {e}")
+    print()
+
+    # --- 4. Max Drawdown (simplified) ---
+    print("4. DRAWDOWN ESTIMADO (posicoes abertas)")
+    try:
+        for p in open_pos:
+            ticker = p["ticker"]
+            if ticker in prices:
+                cp = prices[ticker]["price"]
+                entry = p["entry_price"]
+                pnl_pct = ((cp - entry) / entry) * 100
+
+                # Get historical max adverse excursion
+                try:
+                    hist = yf.Ticker(ticker).history(period="1mo")
+                    if not hist.empty and len(hist) >= 5:
+                        hist_low = hist["Low"].min()
+                        max_dd = ((entry - hist_low) / entry) * 100
+                        print(f"   {ticker}: P&L {pnl_pct:+.1f}% | Max adverse (1m): -{max_dd:.1f}%")
+                except Exception:
+                    print(f"   {ticker}: P&L {pnl_pct:+.1f}%")
+    except Exception as e:
+        print(f"   Erro: {e}")
+    print()
+
+
+def cmd_size(ticker, entry, stop, capital=5000, risk_pct=2.0):
+    """Calculadora de position sizing."""
+    print(f"\n{'='*50}")
+    print(f"  POSITION SIZE CALCULATOR: {ticker.upper()}")
+    print(f"  Entrada: ${entry:.2f} | Stop: ${stop:.2f}")
+    print(f"  Capital: ${capital:,.0f} | Risco max: {risk_pct}%")
+    print(f"{'='*50}\n")
+
+    risk_per_share = abs(entry - stop)
+    if risk_per_share == 0:
+        print("Erro: entry e stop nao podem ser iguais.")
+        return
+
+    max_risk_amount = capital * (risk_pct / 100)
+    max_shares = int(max_risk_amount / risk_per_share)
+    total_cost = max_shares * entry
+
+    # Try to get current price and ATR for context
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        current_price = info.get("currentPrice") or info.get("regularMarketPreviousClose", entry)
+        hist = t.history(period="1mo")
+
+        if not hist.empty and len(hist) >= 14:
+            high = hist["High"]
+            low = hist["Low"]
+            close = hist["Close"]
+            tr1 = high - low
+            tr2 = (high - close.shift()).abs()
+            tr3 = (low - close.shift()).abs()
+            true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr = true_range.rolling(14).mean().iloc[-1]
+            atr_pct = (atr / current_price) * 100
+            atr_stop_size = int(max_risk_amount / (atr * 2))
+            atr_stop_cost = atr_stop_size * entry
+
+            print(f"   Preco atual: ${current_price:.2f}")
+            print(f"   ATR (14): ${atr:.2f} ({atr_pct:.1f}%)")
+            print()
+            print(f"   --- Stop Manual (${stop:.2f}) ---")
+            print(f"   Risco/share: ${risk_per_share:.2f}")
+            print(f"   Max shares: {max_shares} | Custo: ${total_cost:,.0f}")
+            print(f"   R/R com target 2:1: ${entry + 2*risk_per_share:.2f}")
+            print()
+            print(f"   --- Stop ATR 2x (${entry - atr*2:.2f}) ---")
+            print(f"   Risco/share: ${atr*2:.2f}")
+            print(f"   Max shares: {atr_stop_size} | Custo: ${atr_stop_cost:,.0f}")
+            print()
+
+            if max_shares <= 0:
+                print("   ⚠️ Risco por share e maior que o risco maximo — ajusta o stop ou o capital.")
+    except Exception:
+        print(f"   Risco/share: ${risk_per_share:.2f}")
+        print(f"   Max shares: {max_shares} | Custo: ${total_cost:,.0f}")
+        print(f"   Target (2:1): ${entry + 2*risk_per_share:.2f}")
+        print()
+
+
+# ============================================================
 # CLI
 # ============================================================
 
@@ -329,6 +554,9 @@ def main():
     parser.add_argument("--update", type=str, metavar="TICKER",
                        help="Atualizar stop/target de uma posicao")
     parser.add_argument("--clean", action="store_true", help="Remover posicoes fechadas")
+    parser.add_argument("--risk", action="store_true", help="Analise de risco avancada (correlacao, VaR, beta)")
+    parser.add_argument("--size", nargs=3, metavar=("TICKER", "ENTRY", "STOP"),
+                       help="Calcula position sizing: TICKER ENTRY STOP")
     parser.add_argument("--export", action="store_true", help="Exportar portfolio para CSV")
 
     args = parser.parse_args()
@@ -350,6 +578,11 @@ def main():
         cmd_update(args.update, stop=args.stop, target=args.target, note=args.note)
     elif args.clean:
         cmd_clean()
+    elif args.risk:
+        cmd_risk()
+    elif args.size:
+        ticker, entry, stop = args.size
+        cmd_size(ticker.upper(), float(entry), float(stop))
     elif args.export:
         positions = load_positions()
         if positions:

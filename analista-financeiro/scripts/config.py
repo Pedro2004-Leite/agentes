@@ -53,8 +53,39 @@ MACRO_MONITORS = [
     "EURUSD=X",  # Euro/Dolar
     "GC=F",      # Ouro
     "CL=F",      # Petroleo WTI
-    "TNX",       # Yield 10Y EUA
 ]
+
+# ---- Yield Curve (para analise de curva) ----
+YIELD_TICKERS = [
+    "^IRX",   # 13-week T-bill
+    "^FVX",   # 5Y Treasury
+    "TNX",    # 10Y Treasury
+    "TYX",    # 30Y Treasury
+]
+
+# ---- Futures (pre-market direction) ----
+FUTURES_TICKERS = [
+    "ES=F",    # S&P 500 E-mini
+    "NQ=F",    # NASDAQ E-mini
+    "RTY=F",   # Russell 2000 E-mini
+    "YM=F",    # Dow E-mini
+]
+
+# ---- Sector ETFs (rotation analysis) ----
+SECTOR_ETFS = {
+    "XLK": "Technology",
+    "XLF": "Financials",
+    "XLE": "Energy",
+    "XLV": "Healthcare",
+    "XLI": "Industrials",
+    "XLP": "Consumer Staples",
+    "XLRE": "Real Estate",
+    "XLU": "Utilities",
+    "XLB": "Materials",
+    "XLY": "Consumer Disc.",
+    "SMH": "Semiconductors",
+    "IWM": "Small Caps",
+}
 
 # ---- Screening defaults ----
 DEFAULT_SCREENER_UNIVERSE = "sp500"  # "sp500", "nasdaq100", "eurostoxx50", ou lista de tickers

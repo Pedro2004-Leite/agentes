@@ -10,6 +10,7 @@ positions.json
 
 # Python
 __pycache__/
+.yfinance_cache/
 *.pyc
 *.pyo
 .venv/

@@ -12,6 +12,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import get_report_path, ensure_dirs, ANOS_HISTORICOS
 
 try:
+    import requests_cache
+    requests_cache.install_cache(
+        str(Path(__file__).parent / '.yfinance_cache'),
+        expire_after=900,
+        allowable_methods=['GET'],
+    )
     import yfinance as yf
     import pandas as pd
     import numpy as np
@@ -145,6 +151,84 @@ def analyze_fundamentals(ticker):
         # Raw data
         "info": info,
     }
+
+
+# ============================================================
+# Advanced Metrics (quarterly, earnings history, insider)
+# ============================================================
+
+def analyze_advanced(ticker):
+    """Extrair dados avancados: quarterly trends, earnings beat rate, insider trading."""
+    t = yf.Ticker(ticker)
+    result = {}
+
+    # -- Quarterly revenue & earnings trend --
+    try:
+        q_income = t.quarterly_income_stmt
+        if q_income is not None and not q_income.empty:
+            result["quarterly_revenue"] = q_income.loc["Total Revenue"].tolist()[:4] if "Total Revenue" in q_income.index else []
+            result["quarterly_net_income"] = q_income.loc["Net Income"].tolist()[:4] if "Net Income" in q_income.index else []
+            result["quarterly_dates"] = [str(d.date()) for d in q_income.columns[:4]]
+    except Exception:
+        result["quarterly_revenue"] = []
+        result["quarterly_net_income"] = []
+        result["quarterly_dates"] = []
+
+    # -- Earnings beat rate --
+    try:
+        earnings_hist = t.earnings_history
+        if earnings_hist is not None and not earnings_hist.empty:
+            beats = (earnings_hist["epsActual"] > earnings_hist["epsEstimate"]).sum()
+            total = len(earnings_hist)
+            beat_rate = beats / total if total > 0 else None
+            result["earnings_beat_rate"] = beat_rate
+            result["earnings_total_quarters"] = total
+            result["earnings_beats"] = beats
+        else:
+            result["earnings_beat_rate"] = None
+    except Exception:
+        result["earnings_beat_rate"] = None
+
+    # -- EPS estimate revisions --
+    try:
+        eps_trend = t.eps_trend
+        if eps_trend is not None and not eps_trend.empty:
+            result["eps_trend"] = eps_trend.to_dict()
+    except Exception:
+        result["eps_trend"] = None
+
+    try:
+        eps_rev = t.eps_revisions
+        if eps_rev is not None and not eps_rev.empty:
+            result["eps_revisions"] = eps_rev.to_dict()
+    except Exception:
+        result["eps_revisions"] = None
+
+    # -- Insider transactions --
+    try:
+        insider = t.insider_transactions
+        if insider is not None and not insider.empty:
+            recent = insider.head(10)
+            total_buys = (recent["startDate"].notna()).sum() if "startDate" in recent.columns else 0
+            result["insider_transactions"] = recent.to_dict()
+            result["insider_recent_count"] = len(recent)
+        else:
+            result["insider_transactions"] = None
+    except Exception:
+        result["insider_transactions"] = None
+
+    # -- Analyst recommendation trend --
+    try:
+        recs = t.recommendations
+        if recs is not None and not recs.empty:
+            result["recommendation_trend"] = {
+                "recent": recs.head(5).to_dict() if len(recs) >= 5 else recs.to_dict(),
+                "count": len(recs),
+            }
+    except Exception:
+        result["recommendation_trend"] = None
+
+    return result
 
 
 # ============================================================
@@ -536,6 +620,14 @@ def generate_report(ticker, peer_tickers=None, full=False):
         print(f"Erro no valuation: {e}")
         val = {}
 
+    # 2b. Advanced metrics
+    print("[2b/6] Quarterly data + earnings history + insider...")
+    try:
+        adv = analyze_advanced(ticker)
+    except Exception as e:
+        print(f"Erro advanced: {e}")
+        adv = {}
+
     # 3. Peers
     peers_data = None
     if peer_tickers:
@@ -644,6 +736,72 @@ def generate_report(ticker, peer_tickers=None, full=False):
         L.append("⚠️ **Current Ratio < 1** — potenciais problemas de liquidez de curto prazo.")
 
     L.append("")
+
+    # ---- 2b. Quarterly Trends + Earnings History ----
+    if adv:
+        q_rev = adv.get("quarterly_revenue", [])
+        q_dates = adv.get("quarterly_dates", [])
+        if q_rev and len(q_rev) >= 2:
+            L.append("### Tendencia Trimestral de Receita")
+            L.append("")
+            L.append("| Periodo | Receita |")
+            L.append("|---------|---------|")
+            for i, rev in enumerate(q_rev[:4]):
+                date_str = q_dates[i] if i < len(q_dates) else f"Q{i+1}"
+                L.append(f"| {date_str} | {fmt_b(rev)} |")
+            # Crescimento QoQ
+            if len(q_rev) >= 2:
+                qoq = ((q_rev[0] - q_rev[1]) / abs(q_rev[1])) * 100 if q_rev[1] != 0 else 0
+                L.append(f"**Crescimento QoQ:** {qoq:+.1f}%")
+            L.append("")
+
+        # Earnings beat rate
+        beat_rate = adv.get("earnings_beat_rate")
+        if beat_rate is not None:
+            beats = adv.get("earnings_beats", 0)
+            total = adv.get("earnings_total_quarters", 0)
+            L.append("### Earnings Beat Rate")
+            L.append("")
+            if total > 0:
+                L.append(f"- **{beats}/{total}** quarters acima do estimado (**{beat_rate*100:.0f}%** beat rate)")
+                if beat_rate > 0.75:
+                    L.append("- 🟢 Bate estimativas consistentemente — quality signal forte")
+                elif beat_rate > 0.5:
+                    L.append("- 🟡 Beat rate medio — sem vantagem informacional clara")
+                else:
+                    L.append("- 🔴 Raramente bate estimativas — guidance pode ser agressivo ou execucao fraca")
+            L.append("")
+
+        # EPS revisions
+        eps_trend = adv.get("eps_trend")
+        if eps_trend:
+            L.append("### EPS Estimate Revisions")
+            L.append("")
+            # Get current quarter estimate trend
+            current_key = next((k for k in eps_trend.keys() if "current" in str(k).lower()), None)
+            if current_key:
+                trend_data = eps_trend[current_key]
+                if isinstance(trend_data, dict):
+                    periods = sorted(trend_data.keys(), reverse=True)[:3]
+                    if periods:
+                        values = [trend_data.get(p) for p in periods if trend_data.get(p) is not None]
+                        if len(values) >= 2:
+                            direction = "🟢 Upward" if values[0] > values[-1] else "🔴 Downward"
+                            L.append(f"- **Revisao de estimativas:** {direction}")
+            L.append("")
+
+        # Insider transactions
+        insider = adv.get("insider_transactions")
+        if insider:
+            L.append("### Insider Trading (Recente)")
+            L.append("")
+            # Parse insider transactions
+            insider_count = adv.get("insider_recent_count", 0)
+            if insider_count > 0:
+                L.append(f"- {insider_count} transacoes de insiders recentes")
+                # Try to summarize buys vs sells
+                L.append("- (_Ver transacoes detalhadas no terminal: `Ticker.insider_transactions`_)")
+            L.append("")
 
     # ---- 3. Valuation ----
     L.append("## 3. Valuation")

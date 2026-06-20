@@ -12,11 +12,19 @@ import sys
 import time
 from pathlib import Path
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_SCREENER_UNIVERSE, ensure_dirs, get_screener_path
 
 try:
+    import requests_cache
+    requests_cache.install_cache(
+        str(Path(__file__).parent / '.yfinance_cache'),
+        expire_after=900,
+        allowable_methods=['GET'],
+    )
     import yfinance as yf
     import pandas as pd
     import numpy as np
@@ -182,131 +190,178 @@ def compute_indicators(hist):
 # Screening
 # ============================================================
 
+def retry(tries=3, delay=1, backoff=2):
+    """Retry decorator with exponential backoff."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            _tries, _delay = tries, delay
+            while _tries > 0:
+                try:
+                    return func(*args, **kwargs)
+                except Exception:
+                    _tries -= 1
+                    if _tries == 0:
+                        raise
+                    time.sleep(_delay)
+                    _delay *= backoff
+            return None
+        return wrapper
+    return decorator
+
+
+@retry(tries=2, delay=0.5, backoff=2)
+def _fetch_one_ticker(ticker):
+    """Fetch and process a single ticker. Returns dict or None."""
+    t = yf.Ticker(ticker)
+    hist = t.history(period="1y")
+    if hist.empty or len(hist) < 60:
+        return None
+
+    ind = compute_indicators(hist)
+    close = hist["Close"]
+    current_price = close.iloc[-1]
+    name = t.info.get("shortName", ticker)
+    mcap = t.info.get("marketCap")
+
+    return {
+        "ticker": ticker,
+        "name": name,
+        "price": current_price,
+        "mcap": mcap,
+        "indicators": ind,
+        "short_pct": t.info.get("shortPercentOfFloat"),
+        "short_ratio": t.info.get("shortRatio"),
+    }
+
+
+def _apply_filters(data, args):
+    """Apply filters to a single ticker's data. Returns result dict or None."""
+    ticker = data["ticker"]
+    name = data["name"]
+    current_price = data["price"]
+    mcap = data["mcap"]
+    ind = data["indicators"]
+
+    matched = []
+    include = False
+
+    if args.rsi_oversold and ind["rsi"].iloc[-1] < 30:
+        matched.append(f"RSI={ind['rsi'].iloc[-1]:.0f}")
+        include = True
+
+    if args.rsi_overbought and ind["rsi"].iloc[-1] > 70:
+        matched.append(f"RSI={ind['rsi'].iloc[-1]:.0f}")
+        include = True
+
+    if args.macd_bullish:
+        macd_c = ind["macd"].iloc[-1]
+        sig_c = ind["macd_signal"].iloc[-1]
+        if ind["macd"].iloc[-2] <= ind["macd_signal"].iloc[-2] and macd_c > sig_c:
+            matched.append("MACD bullish cross")
+            include = True
+
+    if args.macd_bearish:
+        macd_c = ind["macd"].iloc[-1]
+        sig_c = ind["macd_signal"].iloc[-1]
+        if ind["macd"].iloc[-2] >= ind["macd_signal"].iloc[-2] and macd_c < sig_c:
+            matched.append("MACD bearish cross")
+            include = True
+
+    if args.volume_spike and ind["vol_ratio"] > 2.0:
+        matched.append(f"Vol={ind['vol_ratio']:.1f}x")
+        include = True
+
+    if args.adx_trend and ind["adx"].iloc[-1] > 25:
+        direction = "+DI" if ind["plus_di"].iloc[-1] > ind["minus_di"].iloc[-1] else "-DI"
+        matched.append(f"ADX={ind['adx'].iloc[-1]:.0f}({direction})")
+        include = True
+
+    if args.bollinger_squeeze and ind["bb_width"].iloc[-1] < 5:
+        matched.append("BB squeeze")
+        include = True
+
+    if args.above_sma200 and "sma_200" in ind:
+        if current_price > ind["sma_200"].iloc[-1]:
+            matched.append("↑SMA200")
+            include = True
+
+    if args.below_sma200 and "sma_200" in ind:
+        if current_price < ind["sma_200"].iloc[-1]:
+            matched.append("↓SMA200")
+            include = True
+
+    if args.new_highs and ind.get("near_50d_high"):
+        matched.append("Novo max 50d")
+        include = True
+
+    if args.new_lows and ind.get("near_50d_low"):
+        matched.append("Novo min 50d")
+        include = True
+
+    if args.momentum_1m and ind.get("perf_1m", 0) > 5:
+        matched.append(f"1M={ind['perf_1m']:.1f}%")
+        include = True
+
+    if args.momentum_neg_1m and ind.get("perf_1m", 0) < -5:
+        matched.append(f"1M={ind['perf_1m']:.1f}%")
+        include = True
+
+    if args.short_squeeze:
+        si = data.get("short_pct")
+        sr = data.get("short_ratio")
+        if si is not None and sr is not None and si > 0.15 and sr > 5:
+            matched.append(f"Short{si*100:.0f}%")
+            include = True
+
+    if args.all:
+        include = True
+
+    if include:
+        return {
+            "Ticker": ticker,
+            "Nome": name[:25] if name else ticker,
+            "Preco": f"${current_price:.2f}",
+            "RSI": f"{ind['rsi'].iloc[-1]:.0f}",
+            "ADX": f"{ind['adx'].iloc[-1]:.0f}" if "adx" in ind else "N/D",
+            "Vol": f"{ind['vol_ratio']:.1f}x",
+            "ATR%": f"{ind['atr_pct'].iloc[-1]:.1f}%" if "atr_pct" in ind else "N/D",
+            "M Cap": f"${mcap/1e9:.1f}B" if mcap and not np.isnan(mcap) else "N/D",
+            "Sinais": ", ".join(matched) if matched else "—",
+        }
+    return None
+
+
 def screen_tickers(tickers, args):
-    """Executar screening completo."""
+    """Executar screening em paralelo com ThreadPoolExecutor."""
     results = []
     total = len(tickers)
-    print(f"A analisar {total} tickers...")
+    max_workers = min(12, total)
+    print(f"A analisar {total} tickers ({max_workers} workers)...")
 
-    for i, ticker in enumerate(tickers):
-        if i % 50 == 0 and i > 0:
-            print(f"  {i}/{total} ({i*100/total:.0f}%)")
-            time.sleep(0.5)
-
-        try:
-            t = yf.Ticker(ticker)
-            hist = t.history(period="1y")
-            if hist.empty or len(hist) < 60:
+    # Fetch all ticker data in parallel
+    fetched = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_ticker = {executor.submit(_fetch_one_ticker, t): t for t in tickers}
+        completed = 0
+        for future in as_completed(future_to_ticker):
+            completed += 1
+            if completed % 100 == 0:
+                print(f"  {completed}/{total} ({completed*100/total:.0f}%)")
+            try:
+                data = future.result()
+                if data:
+                    fetched.append(data)
+            except Exception:
                 continue
 
-            ind = compute_indicators(hist)
-            close = hist["Close"]
-            current_price = close.iloc[-1]
-            name = t.info.get("shortName", ticker)
-            mcap = t.info.get("marketCap")
+    print(f"  {len(fetched)}/{total} tickers com dados. A aplicar filtros...")
 
-            matched = []
-            include = False
-
-            # ---- Filtros ----
-
-            # RSI oversold (< 30)
-            if args.rsi_oversold and ind["rsi"].iloc[-1] < 30:
-                matched.append(f"RSI={ind['rsi'].iloc[-1]:.0f}")
-                include = True
-
-            # RSI overbought (> 70)
-            if args.rsi_overbought and ind["rsi"].iloc[-1] > 70:
-                matched.append(f"RSI={ind['rsi'].iloc[-1]:.0f}")
-                include = True
-
-            # MACD bullish cross
-            if args.macd_bullish:
-                macd_c = ind["macd"].iloc[-1]
-                sig_c = ind["macd_signal"].iloc[-1]
-                macd_p = ind["macd"].iloc[-2]
-                sig_p = ind["macd_signal"].iloc[-2]
-                if macd_p <= sig_p and macd_c > sig_c:
-                    matched.append("MACD bullish cross")
-                    include = True
-
-            # MACD bearish cross
-            if args.macd_bearish:
-                macd_c = ind["macd"].iloc[-1]
-                sig_c = ind["macd_signal"].iloc[-1]
-                macd_p = ind["macd"].iloc[-2]
-                sig_p = ind["macd_signal"].iloc[-2]
-                if macd_p >= sig_p and macd_c < sig_c:
-                    matched.append("MACD bearish cross")
-                    include = True
-
-            # Volume spike (> 2x)
-            if args.volume_spike and ind["vol_ratio"] > 2.0:
-                matched.append(f"Vol={ind['vol_ratio']:.1f}x")
-                include = True
-
-            # ADX trend (> 25)
-            if args.adx_trend and ind["adx"].iloc[-1] > 25:
-                direction = "+DI" if ind["plus_di"].iloc[-1] > ind["minus_di"].iloc[-1] else "-DI"
-                matched.append(f"ADX={ind['adx'].iloc[-1]:.0f}({direction})")
-                include = True
-
-            # Bollinger squeeze
-            if args.bollinger_squeeze and ind["bb_width"].iloc[-1] < 5:
-                matched.append(f"BB squeeze")
-                include = True
-
-            # Preco acima SMA 200
-            if args.above_sma200 and "sma_200" in ind:
-                if current_price > ind["sma_200"].iloc[-1]:
-                    matched.append("↑SMA200")
-                    include = True
-
-            # Preco abaixo SMA 200
-            if args.below_sma200 and "sma_200" in ind:
-                if current_price < ind["sma_200"].iloc[-1]:
-                    matched.append("↓SMA200")
-                    include = True
-
-            # Novos maximos 50 dias
-            if args.new_highs and ind.get("near_50d_high"):
-                matched.append("Novo max 50d")
-                include = True
-
-            # Novos minimos 50 dias
-            if args.new_lows and ind.get("near_50d_low"):
-                matched.append("Novo min 50d")
-                include = True
-
-            # Momentum positivo 1 mes
-            if args.momentum_1m and ind.get("perf_1m", 0) > 5:
-                matched.append(f"1M={ind['perf_1m']:.1f}%")
-                include = True
-
-            # Momentum negativo 1 mes
-            if args.momentum_neg_1m and ind.get("perf_1m", 0) < -5:
-                matched.append(f"1M={ind['perf_1m']:.1f}%")
-                include = True
-
-            # Show all
-            if args.all:
-                include = True
-
-            if include:
-                results.append({
-                    "Ticker": ticker,
-                    "Nome": name[:25] if name else ticker,
-                    "Preco": f"${current_price:.2f}",
-                    "RSI": f"{ind['rsi'].iloc[-1]:.0f}",
-                    "ADX": f"{ind['adx'].iloc[-1]:.0f}" if "adx" in ind else "N/D",
-                    "Vol": f"{ind['vol_ratio']:.1f}x",
-                    "ATR%": f"{ind['atr_pct'].iloc[-1]:.1f}%" if "atr_pct" in ind else "N/D",
-                    "M Cap": f"${mcap/1e9:.1f}B" if mcap and not np.isnan(mcap) else "N/D",
-                    "Sinais": ", ".join(matched) if matched else "—",
-                })
-
-        except Exception:
-            continue
+    # Apply filters (fast, single-thread OK)
+    for data in fetched:
+        result = _apply_filters(data, args)
+        if result:
+            results.append(result)
 
     return results
 
@@ -341,6 +396,7 @@ Exemplos:
     parser.add_argument("--new-lows", action="store_true", help="Proximo do minimo 50 dias")
     parser.add_argument("--momentum-1m", action="store_true", help="Momentum 1 mes > 5%%")
     parser.add_argument("--momentum-neg-1m", action="store_true", help="Momentum 1 mes < -5%%")
+    parser.add_argument("--short-squeeze", action="store_true", help="Short interest > 15%% e days-to-cover > 5")
     parser.add_argument("--all", action="store_true", help="Mostrar todos os tickers (com indicadores)")
     # Output
     parser.add_argument("--top", type=int, default=25, help="Numero maximo de resultados")
@@ -355,6 +411,7 @@ Exemplos:
         args.above_sma200, args.below_sma200,
         args.new_highs, args.new_lows,
         args.momentum_1m, args.momentum_neg_1m,
+        args.short_squeeze,
         args.all,
     ]
 
@@ -382,6 +439,7 @@ Exemplos:
     if args.momentum_1m: filter_names.append("Momentum 1M >5%")
     if args.momentum_neg_1m: filter_names.append("Momentum 1M <-5%")
     if args.all: filter_names.append("All (todos)")
+    if args.short_squeeze: filter_names.append("Short squeeze >15%")
 
     print(f"Universo: {args.universe}")
     print(f"Filtros: {', '.join(filter_names)}")

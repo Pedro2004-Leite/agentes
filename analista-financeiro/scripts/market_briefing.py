@@ -10,10 +10,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (
     BENCHMARKS, WATCHLIST, MACRO_MONITORS,
+    YIELD_TICKERS, FUTURES_TICKERS, SECTOR_ETFS,
     get_briefing_path, ensure_dirs,
 )
 
 try:
+    import requests_cache
+    requests_cache.install_cache(
+        str(Path(__file__).parent / '.yfinance_cache'),
+        expire_after=900,
+        allowable_methods=['GET'],
+    )
     import yfinance as yf
     import pandas as pd
     import numpy as np
@@ -219,28 +226,35 @@ def generate_briefing():
 
     print(f"Briefing {date_str} — a gerar...\n")
 
-    # --- Indices ---
-    print("[1/6] Indices...")
+    # --- Data fetching ---
+    print("[1/8] Indices...")
     index_data = get_index_batch(BENCHMARKS)
 
-    # --- Macro (FX, yields, commodities) ---
-    print("[2/6] Macro (FX, commodities, yields)...")
+    print("[2/8] Futures pre-market...")
+    futures_data = get_index_batch(FUTURES_TICKERS)
+
+    print("[3/8] Macro (FX, commodities)...")
     macro_data = get_index_batch(MACRO_MONITORS)
 
-    # --- Watchlist ---
-    print("[3/6] Watchlist com RSI...")
+    print("[4/8] Yield curve...")
+    yield_data = get_index_batch(YIELD_TICKERS)
+
+    print("[5/8] Sector ETFs...")
+    sector_data = get_index_batch(list(SECTOR_ETFS.keys()))
+
+    print("[6/8] Watchlist com RSI...")
     watchlist_data = get_watchlist_batch(WATCHLIST)
 
-    # --- Noticias ---
-    print("[4/6] Noticias...")
+    print("[7/8] Noticias...")
     news = get_market_news(WATCHLIST + ["SPY", "QQQ"])
 
-    # --- Earnings esta semana ---
-    print("[5/6] Earnings calendar...")
+    print("[8/8] Earnings calendar...")
     earnings = get_earnings_this_week(WATCHLIST)
 
     # --- Gerar markdown ---
-    print("[6/6] A gerar relatorio...")
+    print("A gerar relatorio...")
+
+    vix = index_data.get("^VIX", {})
 
     L = []
     L.append(f"# 📊 Market Briefing — {today.strftime('%d/%m/%Y')}")
@@ -253,35 +267,73 @@ def generate_briefing():
     L.append("## 🔥 Resumo Executivo")
     L.append("")
 
-    # Snapshot rapido dos principais indices
-    us_indices = {"^GSPC": "S&P 500", "^IXIC": "NASDAQ", "^DJI": "Dow Jones"}
-    for tid, name in us_indices.items():
-        if tid in index_data:
-            d = index_data[tid]
+    # Futures direction (pre-market)
+    futures_labels = {"ES=F": "S&P 500 Fut", "NQ=F": "NASDAQ Fut", "RTY=F": "Russell Fut", "YM=F": "Dow Fut"}
+    for tid, label in futures_labels.items():
+        d = futures_data.get(tid, {})
+        if d.get("change_pct") is not None:
             chg = fmt_pct(d["change_pct"])
+            marker = "🟢" if d.get("change_pct", 0) > 0 else "🔴" if d.get("change_pct", 0) < 0 else "⚪"
+            L.append(f"- **{label}:** {marker} {chg}")
+
+    # US indices snapshot
+    us_indices = {"^GSPC": "S&P 500", "^IXIC": "NASDAQ", "^DJI": "Dow Jones", "^RUT": "Russell 2000"}
+    for tid, name in us_indices.items():
+        d = index_data.get(tid, {})
+        if d.get("price"):
+            chg = fmt_pct(d.get("change_pct"))
             L.append(f"- **{name}:** {fmt_num(d['price'])} ({chg})")
 
     # VIX
-    vix = index_data.get("^VIX", {})
     if vix.get("price"):
         vix_p = vix["price"]
-        L.append(f"- **VIX:** {vix_p:.1f}", end="")
-        if vix_p < 15:
-            L[-1] += " — Complacente"
-        elif vix_p < 20:
-            L[-1] += " — Normal"
-        elif vix_p < 30:
-            L[-1] += " — ⚠️ Elevado"
-        else:
-            L[-1] += " — 🚨 Medo extremo"
+        if vix_p < 15: regime = "Complacente"
+        elif vix_p < 20: regime = "Normal"
+        elif vix_p < 25: regime = "⚠️ Elevado"
+        elif vix_p < 30: regime = "🚨 Stress"
+        else: regime = "🔥 Panico"
+        L.append(f"- **VIX:** {vix_p:.1f} — {regime}")
 
-    L.append("")
+    # Yield curve
+    try:
+        y2 = yield_data.get("^IRX", {}).get("price")  # 13-week ~= 2Y equivalent
+        y10 = yield_data.get("TNX", {}).get("price")  # 10Y
+        if y2 and y10:
+            spread = y10 - y2
+            spread_str = f"{spread:.2f}%"
+            if spread < 0:
+                L.append(f"- **2Y-10Y Spread:** {spread_str} 🔴 INVERTIDA — risco de recessao")
+            elif spread < 0.5:
+                L.append(f"- **2Y-10Y Spread:** {spread_str} — curva achatada")
+            else:
+                L.append(f"- **2Y-10Y Spread:** {spread_str} — curva normal")
+    except Exception:
+        pass
 
     # EUR/USD
     eurusd = macro_data.get("EURUSD=X", {})
     if eurusd.get("price"):
         L.append(f"- **EUR/USD:** {eurusd['price']:.4f} ({fmt_pct(eurusd.get('change_pct', 0))})")
 
+    L.append("")
+
+    # ---- Futures Pre-Market ----
+    L.append("## 🕐 Futures (Pre-Market)")
+    L.append("")
+    L.append("| Contrato | Preco | Var. | Sinal |")
+    L.append("|----------|-------|------|-------|")
+
+    for tid, label in futures_labels.items():
+        d = futures_data.get(tid, {})
+        price = fmt_num(d.get("price"))
+        chg = fmt_pct(d.get("change_pct"))
+        if d.get("change_pct", 0) > 0:
+            signal = "🟢 Bullish" if d.get("change_pct", 0) > 0.5 else "🟢 Ligeiro"
+        elif d.get("change_pct", 0) < 0:
+            signal = "🔴 Bearish" if d.get("change_pct", 0) < -0.5 else "🔴 Ligeiro"
+        else:
+            signal = "⚪ Flat"
+        L.append(f"| {label} | {price} | {chg} | {signal} |")
     L.append("")
 
     # ---- Indices EUA ----
@@ -294,7 +346,7 @@ def generate_briefing():
     for tid in us_order:
         d = index_data.get(tid, {})
         name = d.get("name", tid)
-        price = fmt_num(d.get("price"))
+        price = fmt_num(d.get("price"), 4 if tid == "^VIX" else 2)
         chg = fmt_pct(d.get("change_pct"))
         marker = "🔴" if (d.get("change_pct") or 0) < 0 else "🟢"
         L.append(f"| {name} | {price} | {marker} {chg} |")
@@ -306,11 +358,9 @@ def generate_briefing():
     L.append("| Indice | Preco | Variacao |")
     L.append("|--------|-------|----------|")
 
-    eu_order = ["^STOXX50E", "^GDAXI", "^FTSE", "^FCHI", "PSI20.LS", "^V2TX"]
-    for tid in eu_order:
+    for tid in ["^STOXX50E", "^GDAXI", "^FTSE", "^FCHI", "PSI20.LS", "^V2TX"]:
         d = index_data.get(tid, {})
-        if d.get("error"):
-            continue
+        if d.get("error"): continue
         name = d.get("name", tid)
         price = fmt_num(d.get("price"))
         chg = fmt_pct(d.get("change_pct"))
@@ -318,16 +368,89 @@ def generate_briefing():
         L.append(f"| {name} | {price} | {marker} {chg} |")
     L.append("")
 
+    # ---- Yield Curve ----
+    L.append("## 📈 Yield Curve")
+    L.append("")
+    L.append("| Maturidade | Yield |")
+    L.append("|------------|-------|")
+
+    yield_labels = {"^IRX": "3 Meses", "^FVX": "5 Anos", "TNX": "10 Anos", "TYX": "30 Anos"}
+    yields_present = {}
+    for tid, label in yield_labels.items():
+        d = yield_data.get(tid, {})
+        if d.get("price"):
+            yields_present[tid] = d["price"]
+            L.append(f"| {label} | {d['price']:.2f}% |")
+
+    # Spreads
+    if len(yields_present) >= 2:
+        L.append("")
+        L.append("**Spreads:**")
+        if "^IRX" in yields_present and "TNX" in yields_present:
+            spread_2_10 = yields_present["TNX"] - yields_present["^IRX"]
+            inv = " (INVERTIDA)" if spread_2_10 < 0 else ""
+            L.append(f"- 3M-10Y: {spread_2_10:.2f}%{inv}")
+        if "TNX" in yields_present and "TYX" in yields_present:
+            spread_10_30 = yields_present["TYX"] - yields_present["TNX"]
+            L.append(f"- 10Y-30Y: {spread_10_30:.2f}%")
+    L.append("")
+
+    # ---- Sector ETF Rotation ----
+    L.append("## 🏗️ Sectores (Rotacao)")
+    L.append("")
+    L.append("| Setor | Ticker | Preco | 1 Semana | 1 Mes |")
+    L.append("|-------|--------|-------|----------|-------|")
+
+    sector_perf = []
+    for tid, sector_name in SECTOR_ETFS.items():
+        d = sector_data.get(tid, {})
+        if d.get("error"): continue
+        price = fmt_num(d.get("price"))
+
+        # Get 1W and 1M performance from history
+        perf_1w = "N/D"
+        perf_1m = "N/D"
+        try:
+            t = yf.Ticker(tid)
+            h = t.history(period="1mo")
+            if len(h) >= 21:
+                cp = h["Close"].iloc[-1]
+                w1 = h["Close"].iloc[-6] if len(h) >= 6 else h["Close"].iloc[0]
+                m1 = h["Close"].iloc[0]
+                perf_1w = f"{((cp-w1)/w1)*100:+.1f}%"
+                perf_1m = f"{((cp-m1)/m1)*100:+.1f}%"
+        except Exception:
+            pass
+
+        L.append(f"| {sector_name} | {tid} | {price} | {perf_1w} | {perf_1m} |")
+
+        # Store for sorting
+        try:
+            pct_val = float(perf_1m.replace("+", "").replace("%", ""))
+        except (ValueError, AttributeError):
+            pct_val = 0
+        sector_perf.append((pct_val, sector_name))
+
+    L.append("")
+
+    # Sector highlights
+    if sector_perf:
+        sector_perf.sort(reverse=True)
+        top_sectors = [s[1] for s in sector_perf[:3]]
+        bottom_sectors = [s[1] for s in sector_perf[-3:]]
+        L.append(f"**🟢 Lideres:** {', '.join(top_sectors)}")
+        L.append(f"**🔴 Atrasados:** {', '.join(bottom_sectors)}")
+        L.append("")
+
     # ---- Commodities & Yields ----
-    L.append("## 🛢️ Commodities & Yields")
+    L.append("## 🛢️ Commodities & FX")
     L.append("")
     L.append("| Ativo | Preco | Variacao |")
     L.append("|-------|-------|----------|")
 
     for tid in MACRO_MONITORS:
         d = macro_data.get(tid, {})
-        if d.get("error"):
-            continue
+        if d.get("error"): continue
         name = d.get("name", tid)
         price = fmt_num(d.get("price"), 4 if "=X" in tid else 2)
         chg = fmt_pct(d.get("change_pct"))
@@ -339,82 +462,79 @@ def generate_briefing():
     L.append("## 🧠 Sentimento de Mercado")
     L.append("")
 
-    # VIX analysis
     vix_p = vix.get("price")
     if vix_p:
         if vix_p < 15:
             L.append(f"- O VIX em {vix_p:.1f} mostra **complacencia** — mercados tranquilos, mas atencao a picos subitos.")
-            L.append(f"- Ambiente favoravel a breakouts e trend following.")
         elif vix_p < 20:
             L.append(f"- VIX {vix_p:.1f} esta em territorio **normal** — volatilidade dentro do esperado.")
-            L.append(f"- Bom para trades com setups tecnicos confirmados.")
         elif vix_p < 25:
             L.append(f"- VIX em {vix_p:.1f} — **volatilidade acima da media**. Cautela com position sizing.")
-            L.append(f"- Stops mais largos recomendados para evitar whipsaws.")
         elif vix_p < 30:
             L.append(f"- VIX {vix_p:.1f} — **stress no mercado**. Reduzir tamanho de posicoes.")
-            L.append(f"- Oportunidades de compra em pânico, mas com gestao rigorosa.")
         else:
             L.append(f"- ⚠️ VIX em {vix_p:.1f} — **medo extremo**. Mercado em panico.")
-            L.append(f"- Possiveis oportunidades de reversal, mas timing e critico.")
 
-    # VSTOXX para Europa
+    # VSTOXX
     vstoxx = index_data.get("^V2TX", {})
     if vstoxx.get("price"):
         v2 = vstoxx["price"]
-        L.append(f"- **VSTOXX (Europa):** {v2:.1f}" +
-                 (" — volatilidade europeia normal" if v2 < 25 else " — cautela na Europa"))
+        L.append(f"- **VSTOXX (Europa):** {v2:.1f}" + (" — volatilidade europeia normal" if v2 < 25 else " — cautela na Europa"))
     L.append("")
 
     # ---- Watchlist ----
     if watchlist_data:
         L.append("## 📋 Watchlist")
         L.append("")
-        L.append("| Ticker | Preco | Var. % | RSI | Sinal |")
-        L.append("|--------|-------|--------|-----|-------|")
+        L.append("| Ticker | Preco | Var. % | RSI | vs SMA50 | Niveis Chave |")
+        L.append("|--------|-------|--------|-----|----------|-------------|")
 
         for w in watchlist_data:
             price = fmt_num(w["price"])
             chg = fmt_pct(w["change_pct"])
             rsi = f"{w['rsi']:.1f}" if w.get("rsi") is not None else "N/D"
-            ticker = w["ticker"]
 
-            # Sinais
-            signals = []
-            if w.get("rsi"):
-                if w["rsi"] < 30:
-                    signals.append("OVS")
-                elif w["rsi"] > 70:
-                    signals.append("OVB")
+            # vs SMA50
+            sma_str = "—"
             if w.get("sma_50") and w.get("price"):
-                if w["price"] > w["sma_50"]:
-                    signals.append("↑SMA50")
-                else:
-                    signals.append("↓SMA50")
-            sinal_str = " ".join(signals) if signals else "—"
+                diff = ((w["price"] - w["sma_50"]) / w["sma_50"]) * 100
+                sma_str = f"{diff:+.1f}%"
 
-            L.append(f"| {ticker} | {price} | {chg} | {rsi} | {sinal_str} |")
+            # Key levels (nearest support/resistance from recent data)
+            key_levels = "—"
+            try:
+                t = yf.Ticker(w["ticker"])
+                h = t.history(period="1mo")
+                if not h.empty and len(h) >= 20:
+                    current = h["Close"].iloc[-1]
+                    highs = h["High"].iloc[-20:].nlargest(2).tolist()
+                    lows = h["Low"].iloc[-20:].nsmallest(2).tolist()
+                    if highs and lows:
+                        nearest_res = min([x for x in highs if x > current], default=None)
+                        nearest_sup = max([x for x in lows if x < current], default=None)
+                        parts = []
+                        if nearest_sup: parts.append(f"S:{nearest_sup:.2f}")
+                        if nearest_res: parts.append(f"R:{nearest_res:.2f}")
+                        key_levels = " | ".join(parts) if parts else "—"
+            except Exception:
+                pass
+
+            L.append(f"| {w['ticker']} | {price} | {chg} | {rsi} | {sma_str} | {key_levels} |")
         L.append("")
 
-        # Destaques: top gainer, top loser
+        # Destaques
         gainers = [w for w in watchlist_data if w.get("change_pct") and w["change_pct"] > 0]
         losers = [w for w in watchlist_data if w.get("change_pct") and w["change_pct"] < 0]
-
         if gainers:
-            top_gainer = max(gainers, key=lambda x: x["change_pct"])
-            L.append(f"**🟢 Top Gainer:** {top_gainer['ticker']} ({fmt_pct(top_gainer['change_pct'])})")
-
+            top_g = max(gainers, key=lambda x: x["change_pct"])
+            L.append(f"**🟢 Top Gainer:** {top_g['ticker']} ({fmt_pct(top_g['change_pct'])})")
         if losers:
-            top_loser = min(losers, key=lambda x: x["change_pct"])
-            L.append(f"**🔴 Top Loser:** {top_loser['ticker']} ({fmt_pct(top_loser['change_pct'])})")
-
-        # OV count
+            top_l = min(losers, key=lambda x: x["change_pct"])
+            L.append(f"**🔴 Top Loser:** {top_l['ticker']} ({fmt_pct(top_l['change_pct'])})")
         ovs = [w for w in watchlist_data if w.get("rsi") and w["rsi"] < 30]
         ovb = [w for w in watchlist_data if w.get("rsi") and w["rsi"] > 70]
-        if ovs:
-            L.append(f"**Oversold:** {', '.join(w['ticker'] for w in ovs)}")
-        if ovb:
-            L.append(f"**Overbought:** {', '.join(w['ticker'] for w in ovb)}")
+        if ovs: L.append(f"**Oversold:** {', '.join(w['ticker'] for w in ovs)}")
+        if ovb: L.append(f"**Overbought:** {', '.join(w['ticker'] for w in ovb)}")
         L.append("")
 
     # ---- Noticias ----
@@ -429,24 +549,19 @@ def generate_briefing():
     # ---- Earnings esta semana ----
     L.append("## 📅 Eventos da Semana")
     L.append("")
-
     if earnings:
         L.append("### Earnings Reports (Watchlist)")
-        L.append("")
         for e in earnings:
             L.append(f"- **{e['ticker']}** ({e['name']}) — {e['date']}")
     else:
-        L.append("### Earnings Reports")
         L.append("Nenhum earnings da watchlist esta semana.")
     L.append("")
 
     # ---- Alertas acionaveis ----
     L.append("## ⚡ Alertas Acionaveis")
     L.append("")
-
     alerts_found = False
 
-    # Watchlist alerts
     for w in watchlist_data:
         if w.get("rsi") and w["rsi"] < 30:
             L.append(f"- **{w['ticker']}** em oversold (RSI {w['rsi']:.1f}) — ver se ha suporte e catalisador para entrada.")
@@ -471,7 +586,6 @@ def generate_briefing():
     print(f"Briefing guardado: {output_path}")
     print()
 
-    # Print ao ecra
     try:
         print(report_text)
     except UnicodeEncodeError:
