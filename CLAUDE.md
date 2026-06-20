@@ -53,9 +53,8 @@ Sistema de agentes AI. Cada agente vive na sua própria pasta com ficheiros mark
 ```
 agentes/
 ├── _template/              ← Molde para criar novos agentes
-├── organizador-diario/     ← Agente de produtividade pessoal
 ├── analista-financeiro/    ← Agente de análise financeira (7 scripts Python)
-├── foco-profundo/          ← Agente de deep work e concentração
+├── setup.ps1               ← Script pós-clone
 ├── novo-agente.ps1         ← Cria novo agente a partir do _template
 ├── CLAUDE.md               ← Este ficheiro
 └── README.md               ← Documentação completa
@@ -132,34 +131,6 @@ yfinance pandas numpy tabulate requests-cache fredapi
 
 ---
 
-## 🎯 Foco Profundo (`foco-profundo/`)
-
-- Gerido pelo OpenClaw em `C:\Creative\agents\foco-profundo`
-- Guardião da atenção: sessões de deep work de 90 min, deteção de rabbit holes, streaks
-- Utilizador: estudante, tendência a dispersão com programação, quer disciplina de foco
-- Tom: curto, firme, minimalista. Não negoceia com distrações.
-
-### Workflow
-1. **Pré-sessão (2 min):** Define o objetivo único, fecha distrações, inicia temporizador
-2. **Durante:** Silêncio total. Só interage se for chamado.
-3. **Pós-sessão (1 min):** Debrief rápido — completou? O que distraiu?
-4. **Relatório semanal:** Médias, streaks, padrões de distração
-
-### Comandos
-- "Vamos focar" / "Deep work" / "Iniciar sessão" — começa o ritual pré-sessão
-- "Acabei o dia" — fecha o dia com métricas de foco
-- Deteção automática de rabbit holes ("só mais 5 min", programar sem output)
-
----
-
-## 📋 Organizador Diário (`organizador-diario/`)
-- Gerido pelo OpenClaw em `C:\Creative\agents\organizador-diario`
-- Ajuda com produtividade: priorização matinal (3 tarefas), blocos de tempo, retrospectiva
-- Utilizador: estudante, Portugal, foco em autonomia financeira e eficiência
-- Tom: curto, direto, caloroso
-
----
-
 ## OpenClaw
 
 O OpenClaw está em `C:\Creative\openclaw\`. A config local (`openclaw.local.json`) aponta para os workspaces dos agentes.
@@ -168,7 +139,7 @@ O OpenClaw está em `C:\Creative\openclaw\`. A config local (`openclaw.local.jso
 {
   "agents": {
     "defaults": {
-      "workspace": "C:/Creative/agents/organizador-diario"
+      "workspace": "C:/Creative/agents/analista-financeiro"
     }
   }
 }
@@ -188,6 +159,5 @@ Depois editar os ficheiros na nova pasta.
 
 - Tudo em Português de Portugal
 - Respostas curtas e diretas
-- Cada agente tem no máximo 3 prioridades por dia
 - Foco no que é acionável, sem ruído
 - NUNCA comitar `TOOLS.md`, `positions.json`, `reports/` ou `.yfinance_cache/`
