@@ -1,64 +1,85 @@
 """
-Screener de stocks por criterios tecnicos e fundamentais.
+Screener de stocks por criterios tecnicos.
 Uso:
-  python screener.py --rsi-oversold
-  python screener.py --rsi-overbought
-  python screener.py --macd-bullish
-  python screener.py --volume-spike
-  python screener.py --universe sp500 --rsi-oversold
-  python screener.py --universe "AAPL,MSFT,NVDA,TSLA" --rsi-oversold
+  python screener.py --rsi-oversold --volume-spike
+  python screener.py --macd-bullish --adx-trend
+  python screener.py --bollinger-squeeze
+  python screener.py --new-highs
+  python screener.py --universe sp500 --rsi-oversold --top 30
+  python screener.py --universe "AAPL,MSFT,NVDA" --all
 """
 import sys
-import os
+import time
 from pathlib import Path
 import argparse
-import time
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import DEFAULT_SCREENER_UNIVERSE, ensure_dirs
+from config import DEFAULT_SCREENER_UNIVERSE, ensure_dirs, get_screener_path
 
 try:
     import yfinance as yf
     import pandas as pd
     import numpy as np
+    from tabulate import tabulate
 except ImportError:
     print("Erro: instala as dependencias primeiro")
-    print("  pip install yfinance pandas numpy")
+    print("  pip install yfinance pandas numpy tabulate")
     sys.exit(1)
 
 
+# ============================================================
+# Universes
+# ============================================================
+
 def get_sp500_tickers():
-    """Obter lista de tickers do S&P 500 via Wikipedia (gratis)."""
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
         tables = pd.read_html(url)
         df = tables[0]
         tickers = df["Symbol"].tolist()
-        # Limpar tickers com pontos (ex: BRK.B -> BRK-B para yfinance)
-        tickers = [t.replace(".", "-") for t in tickers]
-        return tickers
+        return [t.replace(".", "-") for t in tickers]
     except Exception as e:
-        print(f"Erro ao obter S&P 500: {e}")
-        print("Usa --universe para especificar tickers manualmente.")
+        print(f"Erro S&P 500: {e}")
         return []
 
 
 def get_nasdaq100_tickers():
-    """Obter lista do NASDAQ 100 via Wikipedia."""
     try:
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
         tables = pd.read_html(url)
-        # A tabela certa varia, procurar a que tem 'Ticker' ou 'Symbol'
         for table in tables:
-            cols = [c.lower() for c in table.columns]
-            if "ticker" in cols or "symbol" in cols:
-                col = "Ticker" if "Ticker" in table.columns else "Symbol"
-                if col in table.columns:
-                    tickers = table[col].tolist()
+            cols_lower = [c.lower() for c in table.columns]
+            for col_name in table.columns:
+                if col_name.lower() in ("ticker", "symbol"):
+                    tickers = table[col_name].tolist()
                     return [t.replace(".", "-") for t in tickers]
         return []
     except Exception as e:
-        print(f"Erro ao obter NASDAQ 100: {e}")
+        print(f"Erro NASDAQ 100: {e}")
+        return []
+
+
+def get_eurostoxx50_tickers():
+    """Euro Stoxx 50 via Wikipedia (componentes principais)."""
+    try:
+        url = "https://en.wikipedia.org/wiki/EURO_STOXX_50"
+        tables = pd.read_html(url)
+        # A tabela de componentes costuma ter colunas com tickers
+        for table in tables:
+            cols = table.columns.tolist()
+            for col in cols:
+                if col.lower() in ("ticker", "symbol", "company"):
+                    # Encontrar coluna de ticker
+                    ticker_col = None
+                    for c in cols:
+                        if c.lower() in ("ticker", "symbol"):
+                            ticker_col = c
+                            break
+                    if ticker_col:
+                        tickers = table[ticker_col].tolist()
+                        return [t.replace(".", "-") for t in tickers if isinstance(t, str)]
+        return []
+    except Exception:
         return []
 
 
@@ -68,113 +89,220 @@ def get_universe(universe_str):
         return get_sp500_tickers()
     elif universe_str == "nasdaq100":
         return get_nasdaq100_tickers()
+    elif universe_str == "eurostoxx50":
+        tickers = get_eurostoxx50_tickers()
+        if not tickers:
+            print("Euro Stoxx 50 indisponivel. Usa uma lista manual.")
+        return tickers
     else:
-        # Tickers separados por virgula
-        return [t.strip().upper() for t in universe_str.split(",")]
+        return [t.strip().upper() for t in universe_str.split(",") if t.strip()]
 
 
-def rsi(prices, period=14):
-    """Calcular RSI."""
-    delta = prices.diff()
+# ============================================================
+# Indicators
+# ============================================================
+
+def compute_indicators(hist):
+    """Calcular todos os indicadores tecnicos para uma serie historica."""
+    close = hist["Close"]
+    high = hist["High"]
+    low = hist["Low"]
+    volume = hist["Volume"]
+
+    indicators = {}
+
+    # RSI
+    delta = close.diff()
     gain = delta.where(delta > 0, 0.0)
     loss = (-delta).where(delta < 0, 0.0)
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
+    indicators["rsi"] = 100 - (100 / (1 + rs))
 
+    # ATR
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    indicators["atr"] = true_range.rolling(14).mean()
+    indicators["atr_pct"] = (indicators["atr"] / close) * 100
+
+    # ADX
+    plus_dm = high.diff().where(high.diff() > low.diff().abs(), 0)
+    minus_dm = low.diff().abs().where(low.diff().abs() > high.diff(), 0)
+    atr_adx = true_range.rolling(14).mean()
+    plus_di = 100 * (plus_dm.rolling(14).mean() / atr_adx)
+    minus_di = 100 * (minus_dm.rolling(14).mean() / atr_adx)
+    dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di))
+    indicators["adx"] = dx.rolling(14).mean()
+    indicators["plus_di"] = plus_di
+    indicators["minus_di"] = minus_di
+
+    # MACD
+    ema_12 = close.ewm(span=12).mean()
+    ema_26 = close.ewm(span=26).mean()
+    indicators["macd"] = ema_12 - ema_26
+    indicators["macd_signal"] = indicators["macd"].ewm(span=9).mean()
+
+    # SMAs
+    for p in [20, 50, 200]:
+        if len(close) >= p:
+            indicators[f"sma_{p}"] = close.rolling(p).mean()
+
+    # Bollinger
+    bb_mid = close.rolling(20).mean()
+    bb_std = close.rolling(20).std()
+    indicators["bb_upper"] = bb_mid + 2 * bb_std
+    indicators["bb_lower"] = bb_mid - 2 * bb_std
+    indicators["bb_width"] = ((indicators["bb_upper"] - indicators["bb_lower"]) / bb_mid) * 100
+
+    # Volume ratio
+    avg_vol_20 = volume.iloc[-21:-1].mean() if len(volume) >= 21 else volume.mean()
+    recent_vol = volume.iloc[-3:].mean()
+    indicators["vol_ratio"] = recent_vol / avg_vol_20 if avg_vol_20 > 0 else 1
+
+    # Novos maximos/minimos (50 dias)
+    max_50 = high.iloc[-50:].max()
+    min_50 = low.iloc[-50:].min()
+    current = close.iloc[-1]
+    indicators["near_52w_high"] = current >= high.iloc[-252:].max() * 0.98 if len(close) >= 252 else False
+    indicators["near_50d_high"] = current >= max_50 * 0.99
+    indicators["near_50d_low"] = current <= min_50 * 1.01
+
+    # Momentums
+    for label, days in [("1w", 5), ("1m", 21), ("3m", 63)]:
+        if len(close) > days:
+            indicators[f"perf_{label}"] = ((current - close.iloc[-days]) / close.iloc[-days]) * 100
+
+    return indicators
+
+
+# ============================================================
+# Screening
+# ============================================================
 
 def screen_tickers(tickers, args):
-    """Executar screening."""
+    """Executar screening completo."""
     results = []
     total = len(tickers)
     print(f"A analisar {total} tickers...")
 
     for i, ticker in enumerate(tickers):
         if i % 50 == 0 and i > 0:
-            # Pausa para nao sobrecarregar a API
-            print(f"  Progresso: {i}/{total} ({i*100/total:.0f}%)")
+            print(f"  {i}/{total} ({i*100/total:.0f}%)")
             time.sleep(0.5)
 
         try:
             t = yf.Ticker(ticker)
-            hist = t.history(period="6mo")
+            hist = t.history(period="1y")
             if hist.empty or len(hist) < 60:
                 continue
 
+            ind = compute_indicators(hist)
             close = hist["Close"]
-            volume = hist["Volume"]
             current_price = close.iloc[-1]
             name = t.info.get("shortName", ticker)
+            mcap = t.info.get("marketCap")
 
-            # Calcular indicadores
-            rsi_val = rsi(close).iloc[-1]
-
-            # MACD
-            ema_12 = close.ewm(span=12).mean()
-            ema_26 = close.ewm(span=26).mean()
-            macd_line = ema_12 - ema_26
-            signal_line = macd_line.ewm(span=9).mean()
-
-            macd_current = macd_line.iloc[-1]
-            signal_current = signal_line.iloc[-1]
-            macd_prev = macd_line.iloc[-2]
-            signal_prev = signal_line.iloc[-2]
-
-            # Volume
-            avg_vol = volume.iloc[-21:-1].mean()
-            recent_vol = volume.iloc[-3:].mean()
-            vol_ratio = recent_vol / avg_vol if avg_vol > 0 else 1
-
-            # SMA 20, 50
-            sma_20 = close.rolling(20).mean().iloc[-1]
-            sma_50 = close.rolling(50).mean().iloc[-1]
-
-            # Filtros
-            passed = []
+            matched = []
             include = False
 
-            # RSI oversold
-            if args.rsi_oversold and rsi_val < 30:
-                passed.append(f"RSI={rsi_val:.1f}")
+            # ---- Filtros ----
+
+            # RSI oversold (< 30)
+            if args.rsi_oversold and ind["rsi"].iloc[-1] < 30:
+                matched.append(f"RSI={ind['rsi'].iloc[-1]:.0f}")
                 include = True
 
-            # RSI overbought
-            if args.rsi_overbought and rsi_val > 70:
-                passed.append(f"RSI={rsi_val:.1f}")
+            # RSI overbought (> 70)
+            if args.rsi_overbought and ind["rsi"].iloc[-1] > 70:
+                matched.append(f"RSI={ind['rsi'].iloc[-1]:.0f}")
                 include = True
 
             # MACD bullish cross
             if args.macd_bullish:
-                if macd_prev <= signal_prev and macd_current > signal_current:
-                    passed.append("MACD bullish cross")
+                macd_c = ind["macd"].iloc[-1]
+                sig_c = ind["macd_signal"].iloc[-1]
+                macd_p = ind["macd"].iloc[-2]
+                sig_p = ind["macd_signal"].iloc[-2]
+                if macd_p <= sig_p and macd_c > sig_c:
+                    matched.append("MACD bullish cross")
                     include = True
 
             # MACD bearish cross
             if args.macd_bearish:
-                if macd_prev >= signal_prev and macd_current < signal_current:
-                    passed.append("MACD bearish cross")
+                macd_c = ind["macd"].iloc[-1]
+                sig_c = ind["macd_signal"].iloc[-1]
+                macd_p = ind["macd"].iloc[-2]
+                sig_p = ind["macd_signal"].iloc[-2]
+                if macd_p >= sig_p and macd_c < sig_c:
+                    matched.append("MACD bearish cross")
                     include = True
 
-            # Volume spike
-            if args.volume_spike and vol_ratio > 2.0:
-                passed.append(f"Vol={vol_ratio:.1f}x")
+            # Volume spike (> 2x)
+            if args.volume_spike and ind["vol_ratio"] > 2.0:
+                matched.append(f"Vol={ind['vol_ratio']:.1f}x")
                 include = True
 
-            # SMA crosses
-            if args.sma_cross and current_price > sma_20 and current_price < sma_50:
-                # Acima de SMA20 mas abaixo de SMA50 (potencial breakout)
-                passed.append("SMA20<Price<SMA50")
+            # ADX trend (> 25)
+            if args.adx_trend and ind["adx"].iloc[-1] > 25:
+                direction = "+DI" if ind["plus_di"].iloc[-1] > ind["minus_di"].iloc[-1] else "-DI"
+                matched.append(f"ADX={ind['adx'].iloc[-1]:.0f}({direction})")
                 include = True
 
-            if include or args.all:
+            # Bollinger squeeze
+            if args.bollinger_squeeze and ind["bb_width"].iloc[-1] < 5:
+                matched.append(f"BB squeeze")
+                include = True
+
+            # Preco acima SMA 200
+            if args.above_sma200 and "sma_200" in ind:
+                if current_price > ind["sma_200"].iloc[-1]:
+                    matched.append("↑SMA200")
+                    include = True
+
+            # Preco abaixo SMA 200
+            if args.below_sma200 and "sma_200" in ind:
+                if current_price < ind["sma_200"].iloc[-1]:
+                    matched.append("↓SMA200")
+                    include = True
+
+            # Novos maximos 50 dias
+            if args.new_highs and ind.get("near_50d_high"):
+                matched.append("Novo max 50d")
+                include = True
+
+            # Novos minimos 50 dias
+            if args.new_lows and ind.get("near_50d_low"):
+                matched.append("Novo min 50d")
+                include = True
+
+            # Momentum positivo 1 mes
+            if args.momentum_1m and ind.get("perf_1m", 0) > 5:
+                matched.append(f"1M={ind['perf_1m']:.1f}%")
+                include = True
+
+            # Momentum negativo 1 mes
+            if args.momentum_neg_1m and ind.get("perf_1m", 0) < -5:
+                matched.append(f"1M={ind['perf_1m']:.1f}%")
+                include = True
+
+            # Show all
+            if args.all:
+                include = True
+
+            if include:
                 results.append({
                     "Ticker": ticker,
-                    "Nome": name[:30],
+                    "Nome": name[:25] if name else ticker,
                     "Preco": f"${current_price:.2f}",
-                    "RSI": f"{rsi_val:.1f}",
-                    "Vol Ratio": f"{vol_ratio:.1f}x",
-                    "Sinais": ", ".join(passed),
+                    "RSI": f"{ind['rsi'].iloc[-1]:.0f}",
+                    "ADX": f"{ind['adx'].iloc[-1]:.0f}" if "adx" in ind else "N/D",
+                    "Vol": f"{ind['vol_ratio']:.1f}x",
+                    "ATR%": f"{ind['atr_pct'].iloc[-1]:.1f}%" if "atr_pct" in ind else "N/D",
+                    "M Cap": f"${mcap/1e9:.1f}B" if mcap and not np.isnan(mcap) else "N/D",
+                    "Sinais": ", ".join(matched) if matched else "—",
                 })
 
         except Exception:
@@ -184,88 +312,126 @@ def screen_tickers(tickers, args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Stock Screener")
-    parser.add_argument(
-        "--universe", "-u",
-        default=DEFAULT_SCREENER_UNIVERSE,
-        help="Universo de tickers: 'sp500', 'nasdaq100', ou lista separada por virgulas"
+    parser = argparse.ArgumentParser(
+        description="Screener de stocks — filtros tecnicos",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exemplos:
+  python screener.py --rsi-oversold --volume-spike   (bounces com volume)
+  python screener.py --macd-bullish --adx-trend       (momentum forte)
+  python screener.py --bollinger-squeeze               (breakouts iminentes)
+  python screener.py --new-highs --above-sma200        (trend following)
+  python screener.py --rsi-overbought                   (procura de shorts)
+  python screener.py --momentum-neg-1m --rsi-oversold  (reversao de queda)
+        """
     )
+    parser.add_argument("--universe", "-u", default=DEFAULT_SCREENER_UNIVERSE,
+                       help="Universo: 'sp500', 'nasdaq100', 'eurostoxx50', ou tickers separados por virgula")
+    # Filtros
     parser.add_argument("--rsi-oversold", action="store_true", help="RSI < 30")
     parser.add_argument("--rsi-overbought", action="store_true", help="RSI > 70")
-    parser.add_argument("--macd-bullish", action="store_true", help="MACD cruzou acima do sinal")
-    parser.add_argument("--macd-bearish", action="store_true", help="MACD cruzou abaixo do sinal")
-    parser.add_argument("--volume-spike", action="store_true", help="Volume 2x acima da media")
-    parser.add_argument("--sma-cross", action="store_true", help="Preco entre SMA20 e SMA50")
-    parser.add_argument("--all", action="store_true", help="Mostrar todos os tickers com indicadores")
-    parser.add_argument("--top", type=int, default=20, help="Numero maximo de resultados")
+    parser.add_argument("--macd-bullish", action="store_true", help="MACD acabou de cruzar acima")
+    parser.add_argument("--macd-bearish", action="store_true", help="MACD acabou de cruzar abaixo")
+    parser.add_argument("--volume-spike", action="store_true", help="Volume > 2x media")
+    parser.add_argument("--adx-trend", action="store_true", help="ADX > 25 (tendencia forte)")
+    parser.add_argument("--bollinger-squeeze", action="store_true", help="Bollinger Band Width < 5%%")
+    parser.add_argument("--above-sma200", action="store_true", help="Preco acima da SMA 200")
+    parser.add_argument("--below-sma200", action="store_true", help="Preco abaixo da SMA 200")
+    parser.add_argument("--new-highs", action="store_true", help="Proximo do maximo 50 dias")
+    parser.add_argument("--new-lows", action="store_true", help="Proximo do minimo 50 dias")
+    parser.add_argument("--momentum-1m", action="store_true", help="Momentum 1 mes > 5%%")
+    parser.add_argument("--momentum-neg-1m", action="store_true", help="Momentum 1 mes < -5%%")
+    parser.add_argument("--all", action="store_true", help="Mostrar todos os tickers (com indicadores)")
+    # Output
+    parser.add_argument("--top", type=int, default=25, help="Numero maximo de resultados")
+    parser.add_argument("--save", action="store_true", default=True, help="Guardar resultado em ficheiro")
 
     args = parser.parse_args()
 
-    # Validar que pelo menos um filtro foi selecionado
-    if not any([args.rsi_oversold, args.rsi_overbought, args.macd_bullish,
-                args.macd_bearish, args.volume_spike, args.sma_cross, args.all]):
-        print("Erro: especifica pelo menos um filtro.")
-        print("Exemplo: python screener.py --rsi-oversold --volume-spike")
-        print("         python screener.py --macd-bullish --universe AAPL,MSFT,NVDA")
+    filters_active = [
+        args.rsi_oversold, args.rsi_overbought,
+        args.macd_bullish, args.macd_bearish,
+        args.volume_spike, args.adx_trend, args.bollinger_squeeze,
+        args.above_sma200, args.below_sma200,
+        args.new_highs, args.new_lows,
+        args.momentum_1m, args.momentum_neg_1m,
+        args.all,
+    ]
+
+    if not any(filters_active):
+        print("Erro: especifica pelo menos um filtro.\n")
+        print("Exemplos:")
+        print("  python screener.py --rsi-oversold --volume-spike")
+        print("  python screener.py --macd-bullish --adx-trend")
+        print("  python screener.py --bollinger-squeeze --universe nasdaq100")
+        print("  python screener.py --new-highs --above-sma200 --top 15")
         sys.exit(1)
 
+    filter_names = []
+    if args.rsi_oversold: filter_names.append("RSI oversold")
+    if args.rsi_overbought: filter_names.append("RSI overbought")
+    if args.macd_bullish: filter_names.append("MACD bullish cross")
+    if args.macd_bearish: filter_names.append("MACD bearish cross")
+    if args.volume_spike: filter_names.append("Volume spike >2x")
+    if args.adx_trend: filter_names.append("ADX >25 trend")
+    if args.bollinger_squeeze: filter_names.append("Bollinger squeeze")
+    if args.above_sma200: filter_names.append("Acima SMA200")
+    if args.below_sma200: filter_names.append("Abaixo SMA200")
+    if args.new_highs: filter_names.append("Novos maximos 50d")
+    if args.new_lows: filter_names.append("Novos minimos 50d")
+    if args.momentum_1m: filter_names.append("Momentum 1M >5%")
+    if args.momentum_neg_1m: filter_names.append("Momentum 1M <-5%")
+    if args.all: filter_names.append("All (todos)")
+
     print(f"Universo: {args.universe}")
-    print(f"Filtros: ", end="")
-    filters = []
-    if args.rsi_oversold: filters.append("RSI oversold")
-    if args.rsi_overbought: filters.append("RSI overbought")
-    if args.macd_bullish: filters.append("MACD bullish")
-    if args.macd_bearish: filters.append("MACD bearish")
-    if args.volume_spike: filters.append("Volume spike")
-    if args.sma_cross: filters.append("SMA cross")
-    if args.all: filters.append("All tickers")
-    print(", ".join(filters))
-    print("")
+    print(f"Filtros: {', '.join(filter_names)}")
+    print()
 
     tickers = get_universe(args.universe)
     if not tickers:
-        print("Nenhum ticker encontrado no universo especificado.")
+        print("Nenhum ticker encontrado.")
         sys.exit(1)
 
-    print(f"{len(tickers)} tickers carregados.\n")
+    print(f"{len(tickers)} tickers no universo.\n")
 
     results = screen_tickers(tickers, args)
 
     if results:
         df = pd.DataFrame(results)
-        # Ordenar por RSI (oversold primeiro) ou volume (spike primeiro)
+
+        # Ordenar inteligentemente
         if args.volume_spike:
-            df = df.sort_values("Vol Ratio", ascending=False)
+            df = df.sort_values("Vol", ascending=False)
         elif args.rsi_oversold:
             df = df.sort_values("RSI", ascending=True)
         elif args.rsi_overbought:
             df = df.sort_values("RSI", ascending=False)
+        elif args.new_highs:
+            df = df.sort_values("Preco", ascending=False)
 
         display_df = df.head(args.top)
 
-        print(f"\nResultados: {len(df)} encontrados. Top {args.top}:")
-        print("=" * 90)
-
-        # Formatar como tabela
-        from tabulate import tabulate
+        print(f"\nResultados: {len(df)} encontrados. Top {min(args.top, len(df))}:")
+        print("=" * 100)
         print(tabulate(display_df, headers="keys", tablefmt="pipe", showindex=False))
 
         # Guardar
-        ensure_dirs()
-        date_str = pd.Timestamp.now().strftime("%Y-%m-%d")
-        output_path = Path(__file__).parent.parent / "reports" / date_str / "screener.md"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if args.save:
+            ensure_dirs()
+            date_str = pd.Timestamp.now().strftime("%Y-%m-%d")
+            output_path = get_screener_path(date_str)
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(f"# Screener Results — {date_str}\n\n")
-            f.write(f"Filtros: {', '.join(filters)}\n")
-            f.write(f"Universo: {args.universe} ({len(tickers)} tickers)\n")
-            f.write(f"Resultados: {len(df)}\n\n")
-            f.write(tabulate(display_df, headers="keys", tablefmt="pipe", showindex=False))
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(f"# Screener Results — {date_str}\n\n")
+                f.write(f"**Filtros:** {', '.join(filter_names)}\n")
+                f.write(f"**Universo:** {args.universe} ({len(tickers)} tickers)\n")
+                f.write(f"**Resultados:** {len(df)}\n\n")
+                f.write(tabulate(display_df, headers="keys", tablefmt="pipe", showindex=False))
 
-        print(f"\nResultados guardados em: {output_path}")
+            print(f"\nResultados guardados: {output_path}")
     else:
         print("Nenhum resultado encontrado com os filtros atuais.")
+        print("Tenta filtros mais amplos ou outro universo.")
 
 
 if __name__ == "__main__":

@@ -1,41 +1,53 @@
-# Preferências do Utilizador
+# Preferencias do Utilizador
 
 ## Sobre mim
-- Fuso horário: Portugal Continental (WET/BST)
-- Perfil de investimento: Trading ativo
-- Estilo: Swing trading e day trading
-- Horizonte temporal: Curto a médio prazo (dias a semanas)
-- Capital de risco: [preencher]
+- **Fuso horario:** Portugal Continental (WET/BST, UTC+0/+1)
+- **Perfil de investimento:** Trading ativo
+- **Estilo:** Swing trading (dias a semanas) + day trading ocasional
+- **Horizonte temporal:** Curto a medio prazo
+- **Capital de risco:** 5.000 EUR (a definir consoante situacao)
+- **Objetivo:** Autonomia financeira — consistencia > home runs
 
 ## Watchlist
-Tickers a monitorizar regularmente:
-- [Ticker 1]
-- [Ticker 2]
-- [Ticker 3]
-- [Ticker 4]
-- [Ticker 5]
+Tecnologia: AAPL, MSFT, NVDA, AMD, AVGO
+Financeiras: JPM, V, MA, PYPL
+Consumo/Industriais: AMZN, TSLA, RACE, LVMUY
+Energia: XOM, GLEN.L
+Defesa: RTX, LMT
+Biotech/Saude: ABBV, JNJ
 
 ## Setores de interesse
-- Tecnologia
-- [Preencher outros setores]
+- Tecnologia (semicondutores, cloud, AI)
+- Fintech e pagamentos
+- Luxo e consumo premium (Europa)
+- Defesa e aeroespacial
+- Energia e commodities
 
-## Critérios de entrada preferidos
-- Confirmação técnica (MACD cross, RSI, breakout de resistência)
-- Volume acima da média
-- Catalisador identificável (earnings, notícia, setorial)
+## Criterios de entrada preferidos
+1. **Confirmacao tecnica** — MACD cross, RSI a sair de oversold, breakout com volume
+2. **Volume acima da media** — confirmacao de participacao institucional
+3. **Catalisador identificavel** — earnings, noticia setorial, evento macro
+4. **Risk/reward >= 2:1** — baseado em niveis tecnicos, nao percentagens arbitrarias
+5. **Tendencia alinhada** — preferencia por longs acima da SMA 200
 
 ## Regras de risk management
-- Stop loss: baseado em níveis técnicos (máximo 2% do capital por trade)
-- Take profit: pelo menos 2:1 risk/reward
-- Máximo de posições em simultâneo: [preencher]
+- **Stop loss:** Baseado em suporte tecnico ou ATR (nunca > 2% da conta)
+- **Take profit:** Pelo menos 2:1 risk/reward
+- **Max posicoes em simultaneo:** 5
+- **Max correlacao entre posicoes:** Evitar concentracao no mesmo setor
+- **Regra dos 2%:** Nunca arriscar mais de 2% do capital total num unico trade
+- **Sem revenge trading:** Depois de uma perda, pausa minima de 1 hora
 
 ## Ferramentas que uso
-- Dados: yfinance (grátis), Finnhub (opcional)
-- Análise: Scripts Python do agente
-- Notas de trading: [preencher]
+- **Dados:** yfinance (primary), Finnhub (opcional)
+- **Analise:** Scripts Python do agente financeiro
+- **Charting:** TradingView para graficos
+- **Notas de trading:** reports/ do agente
 
-## Preferências de comunicação
-- Respostas curtas e diretas
-- Português de Portugal
-- Gráficos e números > texto
-- Diz-me o que é acionável, não o que é ruído
+## Preferencias de comunicacao
+- **Respostas curtas e diretas** — vai ao ponto
+- **Portugues de Portugal**
+- **Dados > opinioes** — mostra os numeros
+- **Acionavel** — se nao tem implicacao pratica, nao digas
+- **Niveis claros** — entry, stop, target. Sem vagueza.
+- **Disclaimer implicito** — sei que nao e recomendacao, nao preciso de warnings legais constantes

@@ -5,6 +5,9 @@
 # Copia TOOLS.md.example -> TOOLS.md e preenche
 TOOLS.md
 
+# Portfolio positions (dados financeiros pessoais)
+positions.json
+
 # Python
 __pycache__/
 *.pyc
