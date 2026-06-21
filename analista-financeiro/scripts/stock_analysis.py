@@ -9,6 +9,12 @@ from pathlib import Path
 import argparse
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Fix Unicode emoji crash on Windows cp1252 terminals
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from config import get_report_path, ensure_dirs, ANOS_HISTORICOS
 
 try:
@@ -105,6 +111,9 @@ def analyze_fundamentals(ticker):
     eps_trailing = info.get("trailingEps")
     eps_forward = info.get("forwardEps")
     dividend_yield = info.get("dividendYield")
+    # yfinance returns dividendYield as percentage (0.36 = 0.36%), convert to decimal
+    if dividend_yield is not None:
+        dividend_yield = dividend_yield / 100.0
     dividend_rate = info.get("dividendRate")
     payout_ratio = info.get("payoutRatio")
 

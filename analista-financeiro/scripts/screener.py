@@ -16,6 +16,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Fix Unicode emoji crash on Windows cp1252 terminals
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from config import DEFAULT_SCREENER_UNIVERSE, ensure_dirs, get_screener_path
 
 try:
@@ -39,10 +45,19 @@ except ImportError:
 # Universes
 # ============================================================
 
+def _fetch_wiki_table(url):
+    """Fetch Wikipedia table with proper User-Agent (avoids 403)."""
+    import urllib.request, io
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req) as resp:
+        html = resp.read().decode("utf-8")
+        return pd.read_html(io.StringIO(html))
+
+
 def get_sp500_tickers():
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        tables = pd.read_html(url)
+        tables = _fetch_wiki_table(url)
         df = tables[0]
         tickers = df["Symbol"].tolist()
         return [t.replace(".", "-") for t in tickers]
@@ -54,9 +69,8 @@ def get_sp500_tickers():
 def get_nasdaq100_tickers():
     try:
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
-        tables = pd.read_html(url)
+        tables = _fetch_wiki_table(url)
         for table in tables:
-            cols_lower = [c.lower() for c in table.columns]
             for col_name in table.columns:
                 if col_name.lower() in ("ticker", "symbol"):
                     tickers = table[col_name].tolist()
@@ -71,21 +85,16 @@ def get_eurostoxx50_tickers():
     """Euro Stoxx 50 via Wikipedia (componentes principais)."""
     try:
         url = "https://en.wikipedia.org/wiki/EURO_STOXX_50"
-        tables = pd.read_html(url)
-        # A tabela de componentes costuma ter colunas com tickers
+        tables = _fetch_wiki_table(url)
         for table in tables:
-            cols = table.columns.tolist()
-            for col in cols:
-                if col.lower() in ("ticker", "symbol", "company"):
-                    # Encontrar coluna de ticker
-                    ticker_col = None
-                    for c in cols:
-                        if c.lower() in ("ticker", "symbol"):
-                            ticker_col = c
-                            break
-                    if ticker_col:
-                        tickers = table[ticker_col].tolist()
-                        return [t.replace(".", "-") for t in tickers if isinstance(t, str)]
+            ticker_col = None
+            for c in table.columns:
+                if c.lower() in ("ticker", "symbol"):
+                    ticker_col = c
+                    break
+            if ticker_col:
+                tickers = table[ticker_col].tolist()
+                return [t.replace(".", "-") for t in tickers if isinstance(t, str)]
         return []
     except Exception:
         return []

@@ -6,6 +6,11 @@ Integrado com stock_analysis e screener.
 import sys
 from pathlib import Path
 
+# Fix Unicode emoji crash on Windows cp1252 terminals
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:

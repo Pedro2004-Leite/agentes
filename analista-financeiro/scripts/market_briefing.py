@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Fix Unicode emoji crash on Windows cp1252 terminals
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from config import (
     BENCHMARKS, WATCHLIST, MACRO_MONITORS,
     YIELD_TICKERS, FUTURES_TICKERS, SECTOR_ETFS,

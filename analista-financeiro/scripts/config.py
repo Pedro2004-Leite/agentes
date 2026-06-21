@@ -44,8 +44,7 @@ BENCHMARKS = [
     "^GDAXI",     # DAX (Alemanha)
     "^FTSE",      # FTSE 100 (Reino Unido)
     "^FCHI",      # CAC 40 (Franca)
-    "PSI20.LS",   # PSI-20 (Portugal)  # Pode falhar no yfinance, fallback abaixo
-    "^V2TX",      # VSTOXX (volatilidade europeia)
+    "PSI20.LS",   # PSI-20 (Portugal)
 ]
 
 # ---- FX e Commodities ----
@@ -59,8 +58,8 @@ MACRO_MONITORS = [
 YIELD_TICKERS = [
     "^IRX",   # 13-week T-bill
     "^FVX",   # 5Y Treasury
-    "TNX",    # 10Y Treasury
-    "TYX",    # 30Y Treasury
+    "^TNX",   # 10Y Treasury
+    "^TYX",   # 30Y Treasury
 ]
 
 # ---- Futures (pre-market direction) ----
