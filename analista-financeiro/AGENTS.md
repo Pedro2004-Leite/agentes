@@ -20,7 +20,8 @@
 ### Durante o dia (on-demand)
 - **Analise de ticker:** `python scripts/stock_analysis.py <TICKER>` — relatorio institucional completo com quarterly trends, earnings beat rate, insider trading, EPS revisions
 - **Com pares:** `python scripts/stock_analysis.py <TICKER> --compare PEER1,PEER2`
-- **Screening:** `python scripts/screener.py <filtros>` (ver seccao abaixo)
+- **Screening tecnico:** `python scripts/screener.py <filtros>` (ver seccao abaixo)
+- **Screening fundamental (NOVO):** `python scripts/value_screener.py <filtros>` (ver seccao abaixo)
 - **Padroes candlestick:** `python scripts/patterns.py <TICKER>` — hammer, engulfing, doji, morning star, gaps
 - **Checklist pre-trade:** `python scripts/pre_trade_check.py <TICKER> <ENTRY> <STOP> --target <TARGET>` — 6 checks antes de entrar
 - Le o relatorio gerado e faz um resumo dos pontos mais importantes
@@ -54,6 +55,32 @@ python scripts/screener.py --momentum-neg-1m --rsi-oversold
 
 # Universo Europeu
 python scripts/screener.py --universe eurostoxx50 --rsi-oversold
+```
+
+## Comandos de screening fundamental (value_screener.py)
+
+```bash
+# Value investing
+python scripts/value_screener.py --deep-value                         # Graham: P/E<15, P/B<1.5, D/E<1, ROE>10%
+python scripts/value_screener.py --pe-under 10 --pb-under 1           # Deep deep value
+
+# Qualidade
+python scripts/value_screener.py --quality                            # ROE>15%, Margem>40%, D/E<1, EPS growth>10%
+python scripts/value_screener.py --roe-over 0.25 --de-under 0.5       # Alta rentabilidade, baixa alavancagem
+
+# Crescimento
+python scripts/value_screener.py --growth                             # Rev>15%, EPS>20%, PEG<1.5
+python scripts/value_screener.py --revenue-growth-over 0.20 --peg-under 1.0  # Hyper-growth a preco razoavel
+
+# Dividendos
+python scripts/value_screener.py --dividend-value                     # Yield>2%, Payout<60%, P/E<20
+python scripts/value_screener.py --dividend-over 0.04 --pe-under 15   # High yield value
+
+# GARP
+python scripts/value_screener.py --gann                               # PEG<1, ROE>15%, Revenue>10%
+
+# Combinacao custom
+python scripts/value_screener.py --pe-under 15 --roe-over 0.20 --de-under 0.5 --earnings-growth-over 0.10
 ```
 
 ## Comandos de portfolio (portfolio_tracker.py)

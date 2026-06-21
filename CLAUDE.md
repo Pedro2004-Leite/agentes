@@ -19,7 +19,7 @@ Sistema de agentes AI. Cada agente vive na sua própria pasta com ficheiros mark
    ```bash
    python -c "
    import py_compile
-   scripts = ['config.py','market_briefing.py','stock_analysis.py','screener.py','portfolio_tracker.py','patterns.py','pre_trade_check.py']
+   scripts = ['config.py','market_briefing.py','stock_analysis.py','screener.py','value_screener.py','portfolio_tracker.py','patterns.py','pre_trade_check.py']
    for s in scripts: py_compile.compile(s, doraise=True); print(f'  {s} OK')
    print('Todos os scripts prontos.')
    "
@@ -84,13 +84,14 @@ pip install -r requirements.txt
 python market_briefing.py          # testar
 ```
 
-### Scripts (7)
+### Scripts (8)
 
 | Script | Comando exemplo | Função |
 |--------|----------------|--------|
 | `market_briefing.py` | `python market_briefing.py` | Briefing matinal: futures, yield curve, sector rotation, indices EUA+Europa, watchlist com níveis |
 | `stock_analysis.py` | `python stock_analysis.py AAPL` | Relatório institucional 8 secções: DCF 3 cenários, quarterly trends, earnings beat rate, insider trading, technical |
 | `screener.py` | `python screener.py --rsi-oversold --volume-spike` | 14 filtros técnicos, paralelo (12 workers), S&P 500 / NASDAQ 100 / Euro Stoxx 50 |
+| `value_screener.py` | `python value_screener.py --deep-value` | Screening fundamentalista: P/E, P/B, ROE, margens, crescimento, D/E. 5 presets (Deep Value, Quality, Growth, Dividend, GARP) |
 | `portfolio_tracker.py` | `python portfolio_tracker.py --risk` | Tracking posições, matriz correlação, beta, profit factor, expectancy, position sizing |
 | `patterns.py` | `python patterns.py AAPL` | 9 padrões candlestick: hammer, engulfing, doji, morning/evening star, gaps |
 | `pre_trade_check.py` | `python pre_trade_check.py AAPL 150 140 --target 170` | Checklist 6 validações pré-trade (R/R, sizing, earnings, correlação, setor, técnico) |
@@ -104,6 +105,13 @@ python market_briefing.py                                           # Briefing c
 python screener.py --rsi-oversold --volume-spike                    # Bounces com volume
 python screener.py --bollinger-squeeze --above-sma200               # Breakouts iminentes
 python screener.py --short-squeeze                                  # Short squeeze candidates
+
+# Value / Fundamental
+python value_screener.py --deep-value                               # Graham-style: P/E<15, P/B<1.5
+python value_screener.py --quality                                  # ROE alto, margens altas, baixa divida
+python value_screener.py --growth                                   # Crescimento acelerado, PEG baixo
+python value_screener.py --dividend-value                           # Yield >2%, payout seguro, P/E razoavel
+python value_screener.py --pe-under 15 --roe-over 20 --de-under 0.5  # Combinacao custom
 
 # Análise
 python stock_analysis.py NVDA                                       # Análise completa
