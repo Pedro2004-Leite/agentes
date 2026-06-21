@@ -298,12 +298,21 @@ def analyze_valuation(fund, ticker):
     # ---- DCF com sensibilidade ----
     fcf = fund.get("free_cashflow")
     shares = i.get("sharesOutstanding")
-    growth_rate = fund.get("revenue_growth") or 0.05
+    # Usar earnings growth como proxy para FCF growth (nao revenue growth)
+    # Se nao disponivel, usa revenue_growth com haircut de 20%
+    earn_g = fund.get("earnings_growth")
+    rev_g = fund.get("revenue_growth")
+    if earn_g is not None and not (isinstance(earn_g, float) and np.isnan(earn_g)):
+        growth_rate = earn_g
+    elif rev_g is not None and not (isinstance(rev_g, float) and np.isnan(rev_g)):
+        growth_rate = rev_g * 0.8  # FCF cresce mais devagar que revenue
+    else:
+        growth_rate = 0.05
 
     dcf_scenarios = {}
     if fcf and shares and fcf > 0 and shares > 0:
         fcf_per_share = fcf / shares
-        base_growth = min(max(growth_rate, 0.0), 0.30)
+        base_growth = min(max(growth_rate, 0.0), 0.25)
 
         for scenario, (g, wacc, term_g) in {
             "Bull": (base_growth + 0.03, 0.09, 0.030),
@@ -313,7 +322,11 @@ def analyze_valuation(fund, ticker):
             try:
                 projections = []
                 cf = fcf_per_share
-                g_adj = min(g, 0.30)
+                g_adj = min(g, 0.25)
+                # Verificar que WACC > term_g (condicao necessaria para perpetuity)
+                if wacc <= term_g:
+                    dcf_scenarios[scenario] = None
+                    continue
                 for yr in range(1, 6):
                     cf *= (1 + g_adj)
                     projections.append(cf / ((1 + wacc) ** yr))

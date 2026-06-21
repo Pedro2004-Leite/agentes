@@ -303,7 +303,7 @@ def generate_briefing():
     # Yield curve
     try:
         y2 = yield_data.get("^IRX", {}).get("price")  # 13-week ~= 2Y equivalent
-        y10 = yield_data.get("TNX", {}).get("price")  # 10Y
+        y10 = yield_data.get("^TNX", {}).get("price")  # 10Y
         if y2 and y10:
             spread = y10 - y2
             spread_str = f"{spread:.2f}%"
@@ -364,7 +364,7 @@ def generate_briefing():
     L.append("| Indice | Preco | Variacao |")
     L.append("|--------|-------|----------|")
 
-    for tid in ["^STOXX50E", "^GDAXI", "^FTSE", "^FCHI", "PSI20.LS", "^V2TX"]:
+    for tid in ["^STOXX50E", "^GDAXI", "^FTSE", "^FCHI", "PSI20.LS"]:
         d = index_data.get(tid, {})
         if d.get("error"): continue
         name = d.get("name", tid)
@@ -380,7 +380,7 @@ def generate_briefing():
     L.append("| Maturidade | Yield |")
     L.append("|------------|-------|")
 
-    yield_labels = {"^IRX": "3 Meses", "^FVX": "5 Anos", "TNX": "10 Anos", "TYX": "30 Anos"}
+    yield_labels = {"^IRX": "3 Meses", "^FVX": "5 Anos", "^TNX": "10 Anos", "^TYX": "30 Anos"}
     yields_present = {}
     for tid, label in yield_labels.items():
         d = yield_data.get(tid, {})
@@ -392,12 +392,12 @@ def generate_briefing():
     if len(yields_present) >= 2:
         L.append("")
         L.append("**Spreads:**")
-        if "^IRX" in yields_present and "TNX" in yields_present:
-            spread_2_10 = yields_present["TNX"] - yields_present["^IRX"]
+        if "^IRX" in yields_present and "^TNX" in yields_present:
+            spread_2_10 = yields_present["^TNX"] - yields_present["^IRX"]
             inv = " (INVERTIDA)" if spread_2_10 < 0 else ""
             L.append(f"- 3M-10Y: {spread_2_10:.2f}%{inv}")
-        if "TNX" in yields_present and "TYX" in yields_present:
-            spread_10_30 = yields_present["TYX"] - yields_present["TNX"]
+        if "^TNX" in yields_present and "^TYX" in yields_present:
+            spread_10_30 = yields_present["^TYX"] - yields_present["^TNX"]
             L.append(f"- 10Y-30Y: {spread_10_30:.2f}%")
     L.append("")
 
@@ -481,11 +481,6 @@ def generate_briefing():
         else:
             L.append(f"- ⚠️ VIX em {vix_p:.1f} — **medo extremo**. Mercado em panico.")
 
-    # VSTOXX
-    vstoxx = index_data.get("^V2TX", {})
-    if vstoxx.get("price"):
-        v2 = vstoxx["price"]
-        L.append(f"- **VSTOXX (Europa):** {v2:.1f}" + (" — volatilidade europeia normal" if v2 < 25 else " — cautela na Europa"))
     L.append("")
 
     # ---- Watchlist ----

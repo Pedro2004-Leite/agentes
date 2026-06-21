@@ -245,86 +245,91 @@ def _fetch_one_ticker(ticker):
 
 
 def _apply_filters(data, args):
-    """Apply filters to a single ticker's data. Returns result dict or None."""
+    """Apply filters to a single ticker's data. Returns result dict or None.
+
+    Todos os filtros especificados devem passar (AND logic).
+    """
     ticker = data["ticker"]
     name = data["name"]
     current_price = data["price"]
     mcap = data["mcap"]
     ind = data["indicators"]
 
-    matched = []
-    include = False
+    checks = []  # Lista de (filtro_ativo, passou, label)
 
-    if args.rsi_oversold and ind["rsi"].iloc[-1] < 30:
-        matched.append(f"RSI={ind['rsi'].iloc[-1]:.0f}")
-        include = True
+    if args.rsi_oversold:
+        rsi_val = ind["rsi"].iloc[-1]
+        checks.append((True, rsi_val < 30, f"RSI={rsi_val:.0f}"))
 
-    if args.rsi_overbought and ind["rsi"].iloc[-1] > 70:
-        matched.append(f"RSI={ind['rsi'].iloc[-1]:.0f}")
-        include = True
+    if args.rsi_overbought:
+        rsi_val = ind["rsi"].iloc[-1]
+        checks.append((True, rsi_val > 70, f"RSI={rsi_val:.0f}"))
 
     if args.macd_bullish:
         macd_c = ind["macd"].iloc[-1]
         sig_c = ind["macd_signal"].iloc[-1]
-        if ind["macd"].iloc[-2] <= ind["macd_signal"].iloc[-2] and macd_c > sig_c:
-            matched.append("MACD bullish cross")
-            include = True
+        cross = ind["macd"].iloc[-2] <= ind["macd_signal"].iloc[-2] and macd_c > sig_c
+        checks.append((True, cross, "MACD bullish cross"))
 
     if args.macd_bearish:
         macd_c = ind["macd"].iloc[-1]
         sig_c = ind["macd_signal"].iloc[-1]
-        if ind["macd"].iloc[-2] >= ind["macd_signal"].iloc[-2] and macd_c < sig_c:
-            matched.append("MACD bearish cross")
-            include = True
+        cross = ind["macd"].iloc[-2] >= ind["macd_signal"].iloc[-2] and macd_c < sig_c
+        checks.append((True, cross, "MACD bearish cross"))
 
-    if args.volume_spike and ind["vol_ratio"] > 2.0:
-        matched.append(f"Vol={ind['vol_ratio']:.1f}x")
-        include = True
+    if args.volume_spike:
+        checks.append((True, ind["vol_ratio"] > 2.0, f"Vol={ind['vol_ratio']:.1f}x"))
 
-    if args.adx_trend and ind["adx"].iloc[-1] > 25:
+    if args.adx_trend:
+        adx_ok = ind["adx"].iloc[-1] > 25
         direction = "+DI" if ind["plus_di"].iloc[-1] > ind["minus_di"].iloc[-1] else "-DI"
-        matched.append(f"ADX={ind['adx'].iloc[-1]:.0f}({direction})")
-        include = True
+        checks.append((True, adx_ok, f"ADX={ind['adx'].iloc[-1]:.0f}({direction})"))
 
-    if args.bollinger_squeeze and ind["bb_width"].iloc[-1] < 5:
-        matched.append("BB squeeze")
-        include = True
+    if args.bollinger_squeeze:
+        checks.append((True, ind["bb_width"].iloc[-1] < 5, "BB squeeze"))
 
-    if args.above_sma200 and "sma_200" in ind:
-        if current_price > ind["sma_200"].iloc[-1]:
-            matched.append("↑SMA200")
-            include = True
+    if args.above_sma200:
+        ok = "sma_200" in ind and current_price > ind["sma_200"].iloc[-1]
+        checks.append((True, ok, "↑SMA200"))
 
-    if args.below_sma200 and "sma_200" in ind:
-        if current_price < ind["sma_200"].iloc[-1]:
-            matched.append("↓SMA200")
-            include = True
+    if args.below_sma200:
+        ok = "sma_200" in ind and current_price < ind["sma_200"].iloc[-1]
+        checks.append((True, ok, "↓SMA200"))
 
-    if args.new_highs and ind.get("near_50d_high"):
-        matched.append("Novo max 50d")
-        include = True
+    if args.new_highs:
+        checks.append((True, ind.get("near_50d_high", False), "Novo max 50d"))
 
-    if args.new_lows and ind.get("near_50d_low"):
-        matched.append("Novo min 50d")
-        include = True
+    if args.new_lows:
+        checks.append((True, ind.get("near_50d_low", False), "Novo min 50d"))
 
-    if args.momentum_1m and ind.get("perf_1m", 0) > 5:
-        matched.append(f"1M={ind['perf_1m']:.1f}%")
-        include = True
+    if args.momentum_1m:
+        checks.append((True, ind.get("perf_1m", 0) > 5, f"1M={ind.get('perf_1m', 0):.1f}%"))
 
-    if args.momentum_neg_1m and ind.get("perf_1m", 0) < -5:
-        matched.append(f"1M={ind['perf_1m']:.1f}%")
-        include = True
+    if args.momentum_neg_1m:
+        checks.append((True, ind.get("perf_1m", 0) < -5, f"1M={ind.get('perf_1m', 0):.1f}%"))
 
     if args.short_squeeze:
         si = data.get("short_pct")
         sr = data.get("short_ratio")
-        if si is not None and sr is not None and si > 0.15 and sr > 5:
-            matched.append(f"Short{si*100:.0f}%")
-            include = True
+        ok = si is not None and sr is not None and si > 0.15 and sr > 5
+        checks.append((True, ok, f"Short{si*100:.0f}%" if ok else "Short✗"))
 
+    # --- Avaliacao: AND logic (todos os filtros ativos devem passar) ---
+    active_checks = [c for c in checks if c[0]]  # (ativo, passou, label)
     if args.all:
         include = True
+        matched = [c[2] for c in checks if c[0]]
+    elif active_checks:
+        all_pass = all(c[1] for c in active_checks)
+        if all_pass:
+            include = True
+            matched = [c[2] for c in active_checks]
+        else:
+            include = False
+            matched = []
+    else:
+        include = False
+        matched = []
 
     if include:
         return {
